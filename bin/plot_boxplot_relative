@@ -1,0 +1,263 @@
+#!/usr/bin/env python3
+"""Plot boxplots showing the HCLIM statistics for every variable, region, and season, relative to the reference.
+
+Usage: bin/plot_boxplot_relative INPUT SOURCE... START END OUTPUT
+
+Arguments:
+
+  INPUT       Input directory with period-season-region statistics produced by calc_stats (NetCDF).
+  SOURCE      Source name.
+  START       Start year.
+  END         End year.
+  OUTPUT      Output directory (PDF).
+"""
+
+import signal
+
+signal.signal(signal.SIGINT, signal.SIG_DFL)
+
+import os
+import sys
+
+import ds_format as ds
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+import numpy as np
+from lib import io, misc
+from matplotlib.gridspec import GridSpec
+
+try:
+    mpl.font_manager.fontManager.addfont(
+        os.path.join(os.path.expanduser("~"), ".fonts", "OpenSans-Regular.ttf")
+    )
+except:
+    pass
+
+mpl.rc("font", family="Open Sans")
+mpl.rc("axes", linewidth=0.3)
+mpl.rc("lines", linewidth=1.2)
+mpl.rc("xtick.major", width=0.3)
+mpl.rc("ytick.major", width=0.3)
+mpl.rc("legend", framealpha=1)
+mpl.rc("legend", facecolor="#eeeeee")
+mpl.rc("legend", edgecolor="none")
+mpl.rc("legend", fancybox=False)
+mpl.rc("legend", fontsize=7)
+
+COLORS = ["black", "white", "#a5b8ff", "#0232ec"]
+
+VARIABLES = [
+    "tas",
+    "tasmin",
+    "tasmax",
+    "pr",
+    "psl",
+]
+
+LABEL = {
+    "tas": "Temperature (°C)",
+    "tasmin": "Min. temperature (°C)",
+    "tasmax": "Max. temperature (°C)",
+    "pr": "Precipitation (mm mon$^{-1}$)",
+    "psl": "Sea-level pressure (hPa)",
+}
+
+FACTOR = {
+    "pr": 24 * (365.2425 / 12),  # mm mon-1.
+    "psl": 1e-2,  # hPa.
+}
+
+SEASONS = [
+    "ANN",
+    "MAM",
+    "JJA",
+    "SON",
+    "DJF",
+]
+
+VLIM = {
+    "tas": [0, 20],
+    "tasmin": [-3, 15],
+    "tasmax": [2, 22],
+    "pr": [25, 175],
+    "psl": [1000, 1020],
+}
+
+
+def read(input_, var, names, season, region, source, index):
+    desc = {
+        "variable_id": var,
+        "season": season,
+        "region_code": region,
+        "start_year": start,
+        "end_year": end,
+        "source": source,
+    }
+    dd = io.read_dataset(
+        input_,
+        desc,
+        names,
+        merge=False,
+        index=index,
+    )
+    if len(dd) == 1:
+        return dd[0]
+    elif len(dd) == 0:
+        return
+    else:
+        raise IOError(
+            "too many input files for var = %s, season = %s, region = %s, source = %s"
+            % (var, season, region, source)
+        )
+
+
+def find_ref(var, dd):
+    for d in dd:
+        sid = ds.attr(d, "source_id")
+        if var == "psl":
+            if sid == "ERA5":
+                return d
+        else:
+            if sid == "EOBS30-0e":
+                return d
+
+
+def plot_panel(
+    region,
+    var,
+    season,
+    dd,
+    d_ref,
+    labels,
+    xaxis=True,
+    yaxis_left=True,
+    yaxis_right=True,
+    title=True,
+):
+    ax1 = plt.gca()
+    zm = np.ma.median(d_ref["z"])
+    props = dict(
+        patch_artist=True,
+        whiskerprops=dict(color="black", linewidth=0.5),
+        capprops=dict(color="black"),
+        flierprops=dict(
+            markerfacecolor="black",
+            markeredgecolor="none",
+            markersize=3,
+        ),
+    )
+    plt.boxplot(
+        [d["z"] if d is d_ref else [] for d in dd],
+        boxprops=dict(facecolor=COLORS[0], edgecolor="none"),
+        medianprops=dict(color=COLORS[1], linewidth=2),
+        **props,
+    )
+
+    if title:
+        plt.title(season)
+    if yaxis_left:
+        plt.ylabel(LABEL[var])
+    else:
+        plt.gca().set_yticklabels([])
+    ax2 = plt.gca().twinx()
+    plt.boxplot(
+        [[] if d is d_ref else (d["z"] - zm) for d in dd],
+        boxprops=dict(facecolor=COLORS[2], edgecolor="none"),
+        medianprops=dict(color=COLORS[3], linewidth=2),
+        **props,
+    )
+    plt.axhline(0, lw=1, color="k")
+    if yaxis_right:
+        label = "Anomaly from %s" % misc.get_source_title(ds.attrs(d_ref))
+        plt.ylabel(label, color=COLORS[3])
+        plt.gca().spines["right"].set_color(COLORS[3])
+        plt.gca().tick_params(axis="y", colors=COLORS[3])
+    else:
+        plt.gca().set_yticklabels([])
+    if xaxis:
+        ax1.set_xticks(np.arange(1, len(labels) + 1))
+        ax1.set_xticklabels(labels)
+        ax1.tick_params(axis="x", rotation=90)
+    else:
+        plt.gca().set_xticklabels([])
+    return ax1, ax2, ax1.get_ylim(), ax2.get_ylim()
+
+
+if __name__ == "__main__":
+    if len(sys.argv) < 6:
+        sys.stderr.write(sys.modules[__name__].__doc__)
+        sys.exit(1)
+    input_ = sys.argv[1]
+    sources = sys.argv[2:-3]
+    start = int(sys.argv[-3])
+    end = int(sys.argv[-2])
+    output = sys.argv[-1]
+
+    index = io.list_dataset(input_)
+    nrows = len(VARIABLES)
+    ncols = len(SEASONS)
+
+    labels = [
+        misc.get_source_title(misc.parse_dataset_name("x_" + source))
+        for source in sources
+    ]
+
+    for region in misc.REGIONS.keys():
+        plt.figure(figsize=(12, 12))
+        gs = GridSpec(
+            len(VARIABLES),
+            len(SEASONS),
+            hspace=0.05,
+            wspace=0.05,
+        )
+        for i, var in enumerate(VARIABLES):
+            axes_left = []
+            axes_right = []
+            ylim_left = [np.nan, -np.nan]
+            ylim_right = [np.nan, -np.nan]
+            name = var + "_mean_ts"
+            for j, season in enumerate(SEASONS):
+                plt.subplot(gs[i * ncols + j])
+                dd = []
+                for source in sources:
+                    d = read(input_, var, [name], season, region, source, index)
+                    factor = FACTOR.get(var, 1)
+                    if d is None:
+                        d = {"z": np.array([])}
+                    elif var == "pr" and ds.attr(d, "source_id") == "CERRA":
+                        # Skip CERRA precipitation.
+                        d["z"] = np.array([])
+                    else:
+                        d["z"] = d[name] * factor
+                    dd += [d]
+                d_ref = find_ref(var, dd)
+                ax_left, ax_right, ylim_left1, ylim_right1 = plot_panel(
+                    region,
+                    var,
+                    season,
+                    dd,
+                    d_ref,
+                    labels,
+                    title=(i == 0),
+                    xaxis=(i == nrows - 1),
+                    yaxis_left=(j == 0),
+                    yaxis_right=(j == ncols - 1),
+                )
+                axes_left += [ax_left]
+                axes_right += [ax_right]
+                ylim_left = [
+                    np.nanmin([ylim_left[0], ylim_left1[0]]),
+                    np.nanmax([ylim_left[1], ylim_left1[1]]),
+                ]
+                ylim_right = [
+                    np.nanmin([ylim_right[0], ylim_right1[0]]),
+                    np.nanmax([ylim_right[1], ylim_right1[1]]),
+                ]
+            for ax_left, ax_right in zip(axes_left, axes_right):
+                ax_left.set_ylim(ylim_left)
+                ax_right.set_ylim(ylim_right)
+        plt.suptitle(misc.REGIONS[region][0], y=0.93, fontsize=16)
+        file = "%s.pdf" % region
+        output_filename = os.path.join(output, file)
+        plt.savefig(output_filename, bbox_inches="tight")
+        print("-> %s" % output_filename)

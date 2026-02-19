@@ -1,0 +1,23 @@
+EUR-12lcc_OBS_obs_r1i1p1f1_ECAD_EOBS30-0e_v1-r1_mon /home/rossby/imports/obs/EOBS/EOBS30-0e/remap/EUR-12lcc/mon/
+EUR-12lcc_REAN_rean_r1i1p1f1_ECMWF_ERA5_v1-r1_mon /home/rossby/imports/obs/ECMWF/ERA5/remap/EUR-12lcc/mon/
+EUR-12lcc_REAN_rean_r1i1p1f1_ECMWF_CERRA_v1-r1_mon /home/rossby/imports/obs/CERRA/CERRA_SMHI/remap/EUR-12lcc/mon/
+EUR-12lcc_REAN_rean_r1i1p1f1_ECMWF_CERRA-Land_v1-r1_mon /home/rossby/imports/obs/CERRA-Land/CERRA_SMHI/remap/EUR-12lcc/mon/
+EUR-12_ERA5_evaluation_r1i1p1f1_HCLIMcom-SMHI_HCLIM43-ALADIN_v1-r1_mon /home/rossby/prod/202201/bc/links-hist-scn/mon/
+EUR-12_CNRM-ESM2-1_historical+ssp126_r1i1p1f2_HCLIMcom-SMHI_HCLIM43-ALADIN_v1-r1_mon /home/rossby/prod/202204/bc/links-hist-scn/mon/
+EUR-12_MIROC6_historical+ssp126_r1i1p1f1_HCLIMcom-SMHI_HCLIM43-ALADIN_v1-r1_mon /home/rossby/prod/202207/bc/links-hist-scn/mon/
+EUR-12_NorESM2-MM_historical+ssp126_r1i1p1f1_HCLIMcom-METNo_HCLIM43-ALADIN_v1-r1_mon /home/rossby/prod/202319/bc/links-hist-scn/mon/
+EUR-12_EC-Earth3-Veg_historical+ssp126_r1i1p1f1_HCLIMcom-SMHI_HCLIM43-ALADIN_v1-r1_mon /home/rossby/prod/202309/bc/links-hist-scn/mon/
+EUR-12_EC-Earth3-Veg_historical+ssp126_r2i1p1f1_HCLIMcom-SMHI_HCLIM43-ALADIN_v1-r1_mon /home/rossby/prod/202311/bc/links-hist-scn/mon/
+EUR-12_EC-Earth3-Veg_historical+ssp126_r3i1p1f1_HCLIMcom-SMHI_HCLIM43-ALADIN_v1-r1_mon /home/rossby/prod/202317/bc/links-hist-scn/mon/
+EUR-12_MPI-ESM1-2-HR_historical+ssp126_r1i1p1f1_HCLIMcom-SMHI_HCLIM43-ALADIN_v1-r1_mon /home/rossby/prod/202314/bc/links-hist-scn/mon/
+EUR-12_IPSL-CM6A-LR_historical+ssp126_r1i1p1f1_HCLIMcom-DMI_HCLIM43-ALADIN_v1-r1_mon /home/rossby/prod/202402/bc/links-hist-scn/mon/
+CMCC-CM2-SR5_historical+ssp126_r1i1p1f1 /nobackup/rossby24/users/sm_grini/Data/CMIP6/data/CMCC-CM2-SR5/historical/r1i1p1f1/remap/GLB-1deg/mon /nobackup/rossby24/users/sm_grini/Data/CMIP6/data/CMCC-CM2-SR5/ssp126/r1i1p1f1/remap/GLB-1deg/mon
+CNRM-ESM2-1_historical+ssp126_r1i1p1f2 /nobackup/rossby24/users/sm_grini/Data/CMIP6/data/CNRM-ESM2-1/historical/r1i1p1f2/remap/GLB-1deg/mon /nobackup/rossby24/users/sm_grini/Data/CMIP6/data/CNRM-ESM2-1/ssp126/r1i1p1f2/remap/GLB-1deg/mon
+EC-Earth3-Veg_historical+ssp126_r1i1p1f1 /nobackup/rossby24/users/sm_grini/Data/CMIP6/data/EC-Earth3-Veg/historical/r1i1p1f1/remap/GLB-1deg/mon /nobackup/rossby24/users/sm_grini/Data/CMIP6/data/EC-Earth3-Veg/ssp126/r1i1p1f1/remap/GLB-1deg/mon
+EC-Earth3-Veg_historical+ssp126_r2i1p1f1 /nobackup/rossby24/users/sm_grini/Data/CMIP6/data/EC-Earth3-Veg/historical/r2i1p1f1/remap/GLB-1deg/mon /nobackup/rossby24/users/sm_grini/Data/CMIP6/data/EC-Earth3-Veg/ssp126/r2i1p1f1/remap/GLB-1deg/mon
+EC-Earth3-Veg_historical+ssp126_r3i1p1f1 /nobackup/rossby24/users/sm_grini/Data/CMIP6/data/EC-Earth3-Veg/historical/r3i1p1f1/remap/GLB-1deg/mon /nobackup/rossby24/users/sm_grini/Data/CMIP6/data/EC-Earth3-Veg/ssp126/r3i1p1f1/remap/GLB-1deg/mon
+IPSL-CM6A-LR_historical+ssp126_r1i1p1f1 /nobackup/rossby24/users/sm_grini/Data/CMIP6/data/IPSL-CM6A-LR/historical/r1i1p1f1/remap/GLB-1deg/mon /nobackup/rossby24/users/sm_grini/Data/CMIP6/data/IPSL-CM6A-LR/ssp126/r1i1p1f1/remap/GLB-1deg/mon
+MIROC6_historical+ssp126_r1i1p1f1 /nobackup/rossby24/users/sm_grini/Data/CMIP6/data/MIROC6/historical/r1i1p1f1/remap/GLB-1deg/mon /nobackup/rossby24/users/sm_grini/Data/CMIP6/data/MIROC6/ssp126/r1i1p1f1/remap/GLB-1deg/mon
+MPI-ESM1-2-HR_historical+ssp126_r1i1p1f1 /nobackup/rossby24/users/sm_grini/Data/CMIP6/data/MPI-ESM1-2-HR/historical/r1i1p1f1/remap/GLB-1deg/mon /nobackup/rossby24/users/sm_grini/Data/CMIP6/data/MPI-ESM1-2-HR/ssp126/r1i1p1f1/remap/GLB-1deg/mon
+MRI-ESM2-0_historical+ssp126_r1i1p1f1 /nobackup/rossby24/users/sm_grini/Data/CMIP6/data/MRI-ESM2-0/historical/r1i1p1f1/remap/GLB-1deg/mon /nobackup/rossby24/users/sm_grini/Data/CMIP6/data/MRI-ESM2-0/ssp126/r1i1p1f1/remap/GLB-1deg/mon
+NorESM2-MM_historical+ssp126_r1i1p1f1 /nobackup/rossby24/users/sm_grini/Data/CMIP6/data/NorESM2-MM/historical/r1i1p1f1/remap/GLB-1deg/mon /nobackup/rossby24/users/sm_grini/Data/CMIP6/data/NorESM2-MM/ssp126/r1i1p1f1/remap/GLB-1deg/mon

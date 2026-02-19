@@ -1,0 +1,220 @@
+#!/usr/bin/env bash
+set -e
+shopt -s nullglob
+
+njobs=0
+
+task=$1
+
+export PARALLEL=--no-notice
+
+# Specific modules to load on the Freja SMHI cluster:
+module load parallel/20220722-hpc1-gcc-2022a-eb || true
+module load CDO/2.3.0-eccodes-aec-cmor-fftw-hpc2-intel-2023a-eb || true
+
+tmp=$(mktemp)
+tmp_final=$(mktemp)
+trap 'rm -- "$tmp" "$tmp_final"' EXIT
+
+cmd () {
+	echo $* >> "$tmp"
+}
+
+run () {
+	# cat "$tmp"
+	parallel -tuj "$njobs" < "$tmp"
+	echo > "$tmp"
+}
+
+calc_stats () {
+	local input=$1
+	local type_=$2
+	local subtype=$3
+	local out=$4
+	mkdir -p "$out"
+	for source in $(cat "sources/list/${type_}"); do
+		cmd bin/calc_stats "$subtype" "$input/$source" "$source" "$out"
+	done
+}
+
+convert_png () {
+	local dir=$1
+	mkdir -p "$dir/png"
+	for file in "$dir/"*.pdf; do
+		cmd \
+			convert \
+			-density 600 \
+			"$file" \
+			"$dir/png/$(basename "${file%.pdf}").png"
+	done
+}
+
+case "$task" in
+
+"")
+	cat <<EOF
+Usage: run TASK
+
+Tasks:
+
+  source_links          Create source symlinks in the input directory.
+  remap_landmask        Remap land mask to a 1x1 degree grid for GCM calculations.
+  remap_obs             Remap observatiosn to a 1x1 degree grid for GCM calculations.
+  ensemble              Create an model ensemble.
+  calc_stats            Calculate statistics (dep: source_links, remap_landmask, remap_obs, ensemble).
+  plot_map              Plot maps from the statistics (dep: calc_stats).
+  plot_trend            Plot linear trends (dep: calc_stats).
+  plot_heatmap          Plot heatmaps (dep: calc_stats).
+  plot_boxplot          Plot boxplots with statistics (dep: calc_stats).
+  plot_gcm_rcm_scatter  Plot GCM-RCM scatter plot for temperature and precipitation (dep: calc_stats).
+  model_ranking         Calculate model ranking (dep: calc_stats).
+  plot_ranking          Plot model ranking (dep: model_ranking).
+
+EOF
+	;;
+
+source_links)
+	for type_ in hclim gcm; do
+		mkdir -p input/sources
+		while read -r line; do
+			items=($line)
+			name=${items[0]}
+			mkdir -p "input/sources/$name"
+			for path in ${items[@]:1}; do
+				for file in "$path"/*.nc; do
+					if [ -e "$file" ]; then
+						ln -fs "$file" -t "input/sources/$name/"
+					fi
+				done
+			done
+		done < "sources/paths"
+	done
+	;;
+
+remap_landmask)
+	mkdir -p data/landmask
+	cdo \
+		remapbil,r360x180 \
+		input/landmask/sftlf_EUR-12_ERA5_evaluation_r1i1p1f1_HCLIMcom-SMHI_HCLIM43-ALADIN_v1-r1_fx.nc \
+	 	data/landmask/sftlf_EUR-12_ERA5_evaluation_r1i1p1f1_HCLIMcom-SMHI_HCLIM43-ALADIN_v1-r1_fx_1x1deg.nc
+	;;
+
+remap_obs)
+	for obs in $(cat sources/list/obs); do
+		mkdir -p "data/1deg/$obs"
+		for file in "input/sources/$obs"/*; do
+			cmd cdo \
+				remapbil,r360x180 \
+				"$file" \
+				"data/1deg/$obs/$(basename "$file")"
+		done
+	done
+	;;
+
+ensemble)
+	cmd bin/ensemble input/sources $(cat sources/list/hclim_ensemble) data/ensembles
+	cmd bin/ensemble input/sources $(cat sources/list/gcm_ensemble) data/ensembles
+	run
+	for file in data/ensembles/*; do
+		ln -sf "../../data/ensembles/$(basename "$file")" -t input/sources
+	done
+	;;
+
+calc_stats)
+	for type_ in hclim gcm; do
+		for subtype in period_season period_season_region; do
+			calc_stats input/sources "$type_" "$subtype" data/stats/$type_/$subtype
+			input=$([[ $type_ = gcm ]] && echo data/1deg || echo input/sources)
+			calc_stats "$input" obs "$subtype" data/stats/$type_/$subtype
+		done
+	done
+	run
+	bin/index data/stats/{hclim,gcm}/period_season
+	bin/index data/stats/{hclim,gcm}/period_season_region
+	;;
+
+plot_map)
+	for type_ in hclim gcm; do
+		mkdir -p "plot/map/$type_"
+		cmd bin/plot_map \
+			mean \
+			"data/stats/$type_/period_season" \
+			$(cat sources/list/{obs,"${type_}"}) \
+			"plot/map/$type_"
+	done
+	run
+	for type_ in hclim gcm; do
+		convert_png "plot/map/$type_"
+	done
+	;;
+
+plot_trend)
+	for type_ in hclim gcm; do
+		out=plot/trend/$type_
+		mkdir -p "$out"
+		cmd bin/plot_map \
+			trend \
+			"data/stats/$type_/period_season" \
+			$(cat sources/list/{obs,"${type_}"}) \
+			"$out"
+	done
+	run
+	for type_ in hclim gcm; do
+		convert_png "plot/trend/$type_"
+	done
+	;;
+
+plot_heatmap)
+	mkdir -p plot/heatmap
+	bin/plot_heatmap \
+		data/stats/hclim/period_season_region \
+		$(cat sources/list/{obs,hclim}) \
+		plot/heatmap
+	convert_png plot/heatmap
+	;;
+
+plot_boxplot)
+	mkdir -p plot/boxplot
+	bin/plot_boxplot \
+		data/stats/hclim/period_season_region \
+		$(cat sources/list/{obs,hclim}) \
+		1991 2020 \
+		plot/boxplot
+	convert_png plot/boxplot
+	mkdir -p plot/boxplot_relative
+	bin/plot_boxplot_relative \
+		data/stats/hclim/period_season_region \
+		$(cat sources/list/{obs,hclim}) \
+		1991 2020 \
+		plot/boxplot_relative
+	convert_png plot/boxplot_relative
+	;;
+
+plot_gcm_rcm_scatter)
+	bin/plot_gcm_rcm_scatter \
+		data/stats/{gcm,hclim}/period_season_region \
+		$(cat sources/list/hclim) \
+		1991 2020 \
+		plot/gcm_rcm_scatter.pdf
+	convert_png plot
+	;;
+
+model_ranking)
+	bin/model_ranking \
+		data/stats/hclim/period_season_region \
+		$(cat sources/list/{obs,hclim}) \
+		1991 2020 \
+		data/model_ranking.nc
+	;;
+
+plot_ranking)
+	bin/plot_ranking data/model_ranking.nc plot/model_ranking.pdf
+	;;
+
+*)
+	echo "$0: unknown task \"$task\"" >&2
+	exit 1
+
+esac
+
+run

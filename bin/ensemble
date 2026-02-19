@@ -1,0 +1,180 @@
+#!/usr/bin/env python3
+
+"""Creates an ensemble pseudo-model.
+
+Usage: bin/ensemble INPUT SOURCE... OUTPUT
+
+Arguments:
+
+  INPUT   Input directory with a subdirectory for each source.
+  SOURCE  Source name.
+  OUTPUT  Output directory (NetCDF).
+"""
+
+import signal
+
+signal.signal(signal.SIGINT, signal.SIG_DFL)
+
+import os
+import sys
+from concurrent.futures import ProcessPoolExecutor, as_completed
+
+import aquarius_time as aq
+import ds_format as ds
+import numpy as np
+from lib import io, misc
+
+VAR_ATTRS_BLACKLIST = ["missing_value", "_FillValue"]
+
+AUX_VARS = [
+    "lat",
+    "lon",
+    "x",
+    "y",
+    "crs",
+]
+
+VARS = [
+    "pr",
+    "psl",
+    "tas",
+    "tasmax",
+    "tasmin",
+]
+
+ATTRS_ENS = [
+    "driving_experiment",
+    "driving_experiment_id",
+    "driving_institution_id",
+    "driving_source_id",
+    "driving_variant_label",
+    "variant_label",
+    "institution",
+    "institution_id",
+    "source",
+    "source_id",
+    "source_type",
+]
+
+
+def find_common_time(dd):
+    time = set(dd[0]["time"])
+    for d in dd[1:]:
+        time &= set(d["time"])
+    return np.array(sorted(time))
+
+
+def get_experiment_id(source):
+    parts = source.split("_")
+    if len(parts) == 3:
+        return parts[1]  # GCM
+    else:
+        return parts[2]  # HCLIM
+
+
+def copy_attrs(dd, do):
+    n = len(dd)
+    attrs_array = [ds.attrs(d) for d in dd]
+    for k, v in attrs_array[0].items():
+        values = set([attrs_array[i].get(k) for i in range(n)])
+        if len(values) == 1:
+            ds.attr(do, k, v)
+
+
+def process(var, input_, sources):
+    dd = []
+    for source in sources:
+        d = io.read_dataset(
+            os.path.join(input_, source),
+            {
+                "variable_id": var,
+            },
+            ["time", var] + AUX_VARS,
+        )
+        d["time"] = misc.normalize_monthly_time(d["time"])
+        dd += [d]
+    if len(dd) == 0:
+        return
+    time = find_common_time(dd)
+    l = len(time)
+    n, m = dd[0][var].shape[1:]
+    data = np.zeros((l, n, m))
+    for d in dd:
+        mask = np.isin(d["time"], time)
+        data += d[var][mask]
+    data /= len(dd)
+    do = {}
+    do["time"] = time
+    do[var] = data
+    for var1 in ["time", var]:
+        ds.dims(do, var1, ds.dims(dd[0], var1))
+    for var1 in AUX_VARS:
+        if var1 not in ds.vars(dd[0]):
+            continue
+        do[var1] = dd[0][var1][0]
+        dims = ds.dims(dd[0], var1)
+        ds.dims(do, var1, dims[1:])
+    for var1 in ["time", var] + AUX_VARS:
+        if var1 not in ds.vars(dd[0]):
+            continue
+        attrs = ds.attrs(dd[0], var1)
+        attrs = {k: v for k, v in attrs.items() if k not in VAR_ATTRS_BLACKLIST}
+        ds.attrs(do, var1, attrs)
+    ds.rm_attr(do, "time", "units")
+    ds.rm_attr(do, "time", "calendar")
+    ds.time(do, "time", True)
+    copy_attrs(dd, do)
+    for k in ATTRS_ENS:
+        ds.attr(do, k, "ENS")
+    ds.attr(do, "version_realization", "v1-r1")
+    ds.attr(do, "ensemble_members", sources)
+
+    experiment_id = get_experiment_id(sources[0])
+    exp_key = (
+        "driving_experiment"
+        if "driving_experiment_id" in ds.attrs(dd[0])
+        else "experiment"
+    )
+    ds.attr(do, exp_key + "_id", experiment_id)
+    ds.attr(do, exp_key, "combined historical and future")
+    ds.attr(do, "Conventions", "CF-1.12")
+
+    attrs = ds.attrs(do)
+    output_source = misc.get_source_name(attrs)
+    output_dir = os.path.join(output, output_source)
+    try:
+        os.mkdir(output_dir)
+    except FileExistsError:
+        pass
+    file = "%s_%s.nc" % (var, output_source)
+    output_filename = os.path.join(output_dir, file)
+    ds.write(
+        output_filename,
+        do,
+        cf_time_units="days since 1950-01-01 00:00 UTC",
+        cf_time_calendar="standard",
+    )
+    print("-> %s" % output_filename)
+
+
+if __name__ == "__main__":
+    if len(sys.argv) < 4:
+        sys.stderr.write(sys.modules[__name__].__doc__)
+        sys.exit(1)
+    input_ = sys.argv[1]
+    sources = sys.argv[2:-1]
+    output = sys.argv[-1]
+
+    with ProcessPoolExecutor(2) as ex:
+        futures = []
+        for var in VARS:
+            futures += [
+                ex.submit(
+                    process,
+                    var,
+                    input_,
+                    sources,
+                )
+            ]
+        for future in as_completed(futures):
+            future.result()

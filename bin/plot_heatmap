@@ -1,0 +1,432 @@
+#!/usr/bin/env python3
+"""Plot heatmap panel plots for all variables.
+
+Usage: bin/plot_heatmap INPUT SOURCE... OUTPUT
+
+Arguments:
+
+  INPUT   Input directory with period-season-region statistics produced by calc_stats (NetCDF).
+  SOURCE  Source name.
+  OUTPUT  Output directory (PDF).
+"""
+
+import signal
+
+signal.signal(signal.SIGINT, signal.SIG_DFL)
+
+import os
+import sys
+from concurrent.futures import ProcessPoolExecutor, as_completed
+
+import cmcrameri.cm as cmc
+import ds_format as ds
+import matplotlib as mpl
+import numpy as np
+from lib import io, misc
+from matplotlib import pyplot as plt
+from matplotlib.gridspec import GridSpec
+
+try:
+    for variant in ["Regular", "Bold"]:
+        mpl.font_manager.fontManager.addfont(
+            os.path.join(
+                os.path.expanduser("~"), ".fonts", "OpenSans-%s.ttf" % variant
+            )
+        )
+except:
+    pass
+
+mpl.rc("font", family="Open Sans")
+mpl.rc("axes", linewidth=0.3)
+mpl.rc("axes", grid=False)
+mpl.rc("lines", linewidth=1.2)
+mpl.rc("xtick.major", width=0.3)
+mpl.rc("ytick.major", width=0.3)
+mpl.rc("legend", framealpha=1)
+mpl.rc("legend", facecolor="#eeeeee")
+mpl.rc("legend", edgecolor="none")
+mpl.rc("legend", fancybox=False)
+mpl.rc("legend", fontsize=7)
+mpl.rc("grid", color="k")
+mpl.rc("grid", alpha=0.2)
+mpl.rc("grid", lw=0.1)
+
+VARS = [
+    "pr",
+    "psl",
+    "tas",
+    "tasmax",
+    "tasmin",
+]
+
+SEASONS = [
+    "ANN",
+    "DJF",
+    "MAM",
+    "JJA",
+    "SON",
+]
+
+PERIODS = [
+    [1981, 2020],
+    [1991, 2020],
+    [1995, 2014],
+    [2021, 2040],
+    [2041, 2060],
+    [2081, 2100],
+]
+
+COLORS = ["#f5f592"]
+
+
+def get_title(d):
+    title = misc.get_source_title(ds.attrs(d))
+    if title == "HC/EC-Earth3-Veg":
+        return title + "/" + ds.attr(d, "driving_variant_label")[:2]
+    else:
+        return title
+
+
+def get_rounding(x):
+    if x < 100:
+        return 1
+    else:
+        return 10
+
+
+def get_vlim(x, sym=False):
+    if isinstance(x, np.ma.MaskedArray):
+        x = x.filled(np.nan)
+    low = np.nanpercentile(x, 2)
+    high = np.nanpercentile(x, 98)
+    r = get_rounding(max(np.abs(low), np.abs(high)))
+    low = np.floor(low / r) * r
+    high = np.ceil(high / r) * r
+    if sym:
+        y = max(abs(low), abs(high))
+        return [-y, y]
+    else:
+        return [low, high]
+
+
+def determine_vlims(values, ref):
+    vlim1 = [np.inf, -np.inf]
+    vlim2 = [np.inf, -np.inf]
+    l, n, m = values.shape
+    for i in range(n):
+        if i == ref:
+            vlim = get_vlim(values[:, i, :], False)
+            vlim1 = [min(vlim1[0], vlim[0]), max(vlim1[1], vlim[1])]
+        else:
+            vlim = get_vlim(values[:, i, :] - values[:, ref, :], True)
+            y = max(vlim2[1], vlim[1])
+            vlim2 = [-y, y]
+    return vlim1, vlim2
+
+
+def plot_panel(
+    values,
+    labels,
+    ensemble_mask,
+    regions,
+    season,
+    var,
+    long_name,
+    units,
+    ref=0,
+    plot_labels=False,
+    plot_colorbar=False,
+    vlim_abs=None,
+    vlim_rel=None,
+    aspect=1,
+    format="%.1f",
+):
+    n, m = values.shape
+    ii = np.arange(n)
+    jj = np.arange(m)
+
+    values_combined = values.copy()
+
+    values_abs = values.copy()
+    mask = ii == ref
+    values_abs[~mask] = np.nan
+    cmap_abs = plt.get_cmap("viridis").copy()
+    cmap_abs.set_over("#bdaa00")
+    cmap_abs.set_under("#ae00e3")
+    im_abs = plt.imshow(
+        values_abs,
+        cmap=cmap_abs,
+        vmin=vlim_abs[0],
+        vmax=vlim_abs[1],
+        aspect=aspect,
+    )
+
+    values_rel = values.copy()
+    mask = ii != ref
+    for j in jj:
+        values_rel[:, j] -= values[ref, j]
+        values_combined[:, j] -= values[ref, j]
+    values_combined[ref] = values[ref]
+    values_rel[~mask] = np.nan
+    cmap_rel = cmc.vik.copy()
+    cmap_rel.set_over("#d80011")
+    cmap_rel.set_under("#1245fc")
+    if var == "pr":
+        cmap_rel = cmap_rel.reversed()
+    im_rel = plt.imshow(
+        values_rel,
+        cmap=cmap_rel,
+        vmin=vlim_rel[0],
+        vmax=vlim_rel[1],
+        aspect=aspect,
+    )
+
+    plt.yticks(ii, np.arange(1, n + 1))
+    plt.xticks(jj, regions)
+    for i in range(n):
+        for j in range(m):
+            value = values_combined[i, j]
+            im = im_abs if i == ref else im_rel
+            r, g, b, _ = im.cmap(im.norm(value))
+            lightness = 0.299 * r + 0.587 * g + 0.114 * b
+            color = "k" if lightness > 0.5 else "w"
+            plt.text(
+                j,
+                i,
+                format % value,
+                color=color,
+                fontsize=9,
+                ha="center",
+                va="center",
+            )
+    if plot_labels:
+        tick_labels = ["%d. %s" % (i + 1, s) for i, s in enumerate(labels)]
+        plt.yticks(ii, tick_labels)
+        for i, tick_label in enumerate(plt.gca().get_yticklabels()):
+            if ensemble_mask[i] or labels[i] == "ENS":
+                tick_label.set_bbox(dict(facecolor=COLORS[0], edgecolor="none"))
+            if labels[i] == "ENS":
+                tick_label.set_fontweight("bold")
+
+    plt.title(season)
+
+    var_label = misc.get_pretty_var_label(long_name)
+    units_pretty = misc.get_pretty_units(units)
+
+    fw, fh = plt.gcf().get_size_inches()
+    bbox = (
+        plt.gca()
+        .get_window_extent()
+        .transformed(plt.gcf().dpi_scale_trans.inverted())
+    )
+    aw, ah = bbox.width, bbox.height
+
+    if plot_colorbar:
+        cb_loc = [(aw - 3) / fw, 0 / fh, 0.15 / fw, ah / fh]
+        cax = plt.gcf().add_axes(cb_loc)
+        extend = "max" if (var == "pr" and vlim_abs[0] == 0) else "both"
+        cb = plt.gcf().colorbar(im_abs, cax=cax, extend=extend)
+        cb.set_label("%s (%s)" % (var_label, units_pretty))
+
+        cb_loc = [(aw - 2.1) / fw, 0 / fh, 0.15 / fw, ah / fh]
+        cax = plt.gcf().add_axes(cb_loc)
+        cb = plt.gcf().colorbar(im_rel, cax=cax, extend="both")
+        cb.set_label("Anomaly from %s (%s)" % (labels[ref], units_pretty))
+
+
+def read(index, source, var, season, region, period):
+    vars = [var + "_mean"]
+    dd = io.read_dataset(
+        input_,
+        {
+            "variable_id": var,
+            "source": source,
+            "season": season,
+            "start_year": period[0],
+            "end_year": period[1],
+            "region_code": region,
+        },
+        vars,
+        False,
+        index=index,
+    )
+    if len(dd) == 0:
+        return
+    if len(dd) > 1:
+        raise IOError(
+            "too many input files (%d) for %s %s %s %d-%d %s"
+            % (
+                len(dd),
+                var,
+                source,
+                season,
+                period[0],
+                period[1],
+                region,
+            )
+        )
+    return dd[0]
+
+
+def is_gcm(attrs):
+    return "driving_source_id" in attrs and attrs["driving_source_id"] not in [
+        "OBS",
+        "REAN",
+        "ERA5",
+    ]
+
+
+def get_ensemble_mask(attrs_array):
+    included_models = set()
+    n = len(attrs_array)
+    mask = np.full(n, False, bool)
+    for i, attrs in enumerate(attrs_array):
+        if attrs is None:
+            continue
+        title = misc.get_source_title(attrs)
+        if not is_gcm(attrs) or title in included_models:
+            continue
+        mask[i] = True
+        included_models |= {title}
+    return mask
+
+
+def calc_ensemble_mean(values):
+    return np.nanmean(values, axis=0)
+
+
+def get_ensemble_position(attrs_array):
+    i = 0
+    for attrs in attrs_array:
+        if attrs is not None and is_gcm(attrs):
+            break
+        i += 1
+    return i
+
+
+def get_ref(var, labels):
+    if var == "psl":
+        search = ["ERA5", "ENS"]
+    else:
+        search = ["OBS", "ENS"]
+    for what in search:
+        try:
+            i = labels.index(what)
+            return i
+        except ValueError:
+            pass
+    return 0
+
+
+def plot(input_, index, output, var, sources, period):
+    regions = list(misc.REGIONS.keys())
+    l = len(SEASONS)
+    n = len(sources) + 1
+    ens_i = n - 1  # Ensemble mean at the end.
+    m = len(misc.REGIONS)
+    values = np.full((l, n, m), np.nan)
+    attrs_array = np.full(n, None, object)
+    labels = np.full(n, None, object)
+    mask = np.full(n, False, bool)
+    ens_mask = np.full(n, False, bool)
+    long_name = None
+    units = None
+
+    for k, season in enumerate(SEASONS):
+        for i, source in enumerate(sources):
+            for j, region in enumerate(regions):
+                d = read(index, source, var, season, region, period)
+                if d is None:
+                    continue
+                name = var + "_mean"
+                values[k, i, j] = d[name]
+                attrs_array[i] = ds.attrs(d)
+                labels[i] = get_title(d)
+                long_name = ds.attr(d, "long_name", var=name)
+                units = ds.attr(d, "units", var=name)
+                mask[i] = not (var == "pr" and labels[i] == "CERRA")
+
+    # Add ensemble mean.
+    ens_mask = get_ensemble_mask(attrs_array)
+    for k, season in enumerate(SEASONS):
+        values[k, ens_i] = calc_ensemble_mean(values[k, ens_mask])
+    labels[ens_i] = "ENS"
+    mask[ens_i] = True
+    ens_i_new = get_ensemble_position(attrs_array)
+    order = np.arange(n)
+    order[ens_i_new] = ens_i
+    order[(ens_i_new + 1) :] = np.arange(ens_i_new, n - 1)
+    values = values[:, order]
+    labels = labels[order]
+    ens_mask = ens_mask[order]
+    attrs_array = attrs_array[order]
+
+    # Remove empty sources.
+    values = values[:, mask]
+    labels = labels[mask]
+    ens_mask = ens_mask[mask]
+    attrs_array = attrs_array[mask]
+    n = len(labels)
+
+    ref = get_ref(var, list(labels))
+    values_pretty, units_pretty = misc.convert_pretty_units(values, units)
+    vlim_abs, vlim_rel = determine_vlims(values_pretty, ref)
+
+    aspect = 1.2 if var == "psl" else 1
+    panel_height = n * 0.3
+    panel_width = m * 0.3 * aspect
+    hspace = 1.2
+    wspace = 0.8
+    fig_height = 2 * panel_height + hspace
+    fig_width = 3 * panel_width + wspace * 2
+    plt.figure(figsize=(fig_width, fig_height))
+    plt.subplots_adjust(left=0, right=1, bottom=0, top=1)
+    gs = GridSpec(2, 3, hspace=hspace / fig_height, wspace=wspace / fig_width)
+    plt.suptitle(
+        "%d–%d" % (period[0], period[1]),
+        y=((fig_height + 0.55) / fig_height),
+        fontsize=16,
+    )
+    for k, season in enumerate(SEASONS):
+        plt.subplot(gs[k if k < 3 else k + 1])
+        plot_panel(
+            values_pretty[k],
+            labels,
+            ens_mask,
+            regions,
+            season,
+            var,
+            long_name,
+            units_pretty,
+            ref=ref,
+            plot_labels=(k == 3),
+            plot_colorbar=(k == 0),
+            vlim_abs=vlim_abs,
+            vlim_rel=vlim_rel,
+            aspect=(1 / aspect if var == "psl" else 1),
+            format=("%.0f" if var in ["pr", "psl"] else "%.1f"),
+        )
+    output_file = "%s_%d-%d.pdf" % (var, period[0], period[1])
+    output_filename = os.path.join(output, output_file)
+    plt.savefig(output_filename, bbox_inches="tight")
+    print("-> %s" % output_filename)
+
+
+if __name__ == "__main__":
+    if len(sys.argv) < 4:
+        sys.stderr.write(sys.modules[__name__].__doc__)
+        sys.exit(1)
+    input_ = sys.argv[1]
+    sources = sys.argv[2:-1]
+    output = sys.argv[-1]
+
+    with ProcessPoolExecutor() as ex:
+        index = io.list_dataset(input_, ex=ex)
+        futures = []
+        for period in PERIODS:
+            for var in VARS:
+                futures += [
+                    ex.submit(plot, input_, index, output, var, sources, period)
+                ]
+        for future in as_completed(futures):
+            future.result()

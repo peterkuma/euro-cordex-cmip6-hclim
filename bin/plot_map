@@ -1,0 +1,507 @@
+#!/usr/bin/env python3
+"""
+Usage: plot_map TYPE INPUT SOURCE... OUTPUT
+
+Arguments:
+
+  TYPE    Plot type. One of: "mean" or "trend".
+  INPUT   Input directory with period-season statistics produced by calc_stats (NetCDF).
+  SOURCE  Source name.
+  OUTPUT  Output directory (PDF).
+"""
+
+import signal
+
+signal.signal(signal.SIGINT, signal.SIG_DFL)
+
+import os
+import sys
+from concurrent.futures import ProcessPoolExecutor, as_completed
+
+import cartopy.crs as ccrs
+import cartopy.feature as cfeature
+import cartopy.util
+import cmcrameri.cm as cmc
+import ds_format as ds
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
+import numpy as np
+from lib import io, misc
+from matplotlib.gridspec import GridSpec
+from pyproj import CRS
+from pyproj.transformer import transform
+
+try:
+    for variant in ["Regular", "Bold"]:
+        mpl.font_manager.fontManager.addfont(
+            os.path.join(
+                os.path.expanduser("~"), ".fonts", "OpenSans-%s.ttf" % variant
+            )
+        )
+except:
+    pass
+
+mpl.rc("font", family="Open Sans")
+mpl.rc("axes", linewidth=0.3)
+mpl.rc("axes", grid=True)
+mpl.rc("lines", linewidth=1.2)
+mpl.rc("xtick.major", width=0.3)
+mpl.rc("ytick.major", width=0.3)
+mpl.rc("legend", framealpha=1)
+mpl.rc("legend", facecolor="#eeeeee")
+mpl.rc("legend", edgecolor="none")
+mpl.rc("legend", fancybox=False)
+mpl.rc("legend", fontsize=7)
+mpl.rc("grid", color="k")
+mpl.rc("grid", alpha=0.2)
+mpl.rc("grid", lw=0.1)
+mpl.rc("hatch", linewidth=0.05)
+mpl.rc("hatch", color="#000000a0")
+
+NCOLS = 4
+
+VARS = [
+    "pr",
+    "psl",
+    "tas",
+    "tasmax",
+    "tasmin",
+]
+
+SEASONS = [
+    "ANN",
+    "MAM",
+    "JJA",
+    "SON",
+    "DJF",
+]
+
+PERIODS = [
+    [1981, 2020],
+    [1991, 2020],
+    [1995, 2014],
+    [2021, 2040],
+    [2041, 2060],
+    [2081, 2100],
+]
+
+FIG_WIDTH = 7.3  # in
+TOP_MARGIN = 0.7  # in
+BOTTOM_MARGIN = 0.7  # in
+AXIS_HEIGHT = 1.8  # in
+
+LCC_PROJECTION = {
+    "false_easting": 2925000,
+    "false_northing": 2925000,
+    "central_latitude": 49.5,
+    "central_longitude": 10.5,
+    "standard_parallels": [49.5],
+}
+
+COLORS = ["#f5f592", "#DDDDDD"]
+
+
+def get_rounding(x):
+    if x < 100:
+        return 1
+    else:
+        return 10
+
+
+def get_vlim(x, sym=False):
+    if isinstance(x, np.ma.MaskedArray):
+        x = x.filled(np.nan)
+    low = np.nanpercentile(x, 2)
+    high = np.nanpercentile(x, 98)
+    r = get_rounding(max(np.abs(low), np.abs(high)))
+    low = np.floor(low / r) * r
+    high = np.ceil(high / r) * r
+    if sym:
+        y = max(abs(low), abs(high))
+        return [-y, y]
+    else:
+        return [low, high]
+
+
+def determine_vlims(dd, d_ref, name):
+    vlim1 = [np.inf, -np.inf]
+    vlim2 = [np.inf, -np.inf]
+    for d in dd:
+        units = ds.attr(d, "units", var=name)
+        if d_ref is None or d == d_ref:
+            z = d[name]
+            z, _ = misc.convert_pretty_units(z, units)
+            vlim = get_vlim(z, d_ref == None)
+            vlim1 = [min(vlim1[0], vlim[0]), max(vlim1[1], vlim[1])]
+        else:
+            z = d[name] - d_ref[name]
+            z, _ = misc.convert_pretty_units(z, units)
+            vlim = get_vlim(z, True)
+            y = max(vlim2[1], vlim[1])
+            vlim2 = [-y, y]
+    return vlim1, vlim2
+
+
+def get_title(d):
+    title = misc.get_source_title(ds.attrs(d))
+    if title == "HC/EC-Earth3-Veg":
+        return title + "/" + ds.attr(d, "driving_variant_label")[:2]
+    else:
+        return title
+
+
+def get_cmap(var, divergent, vlim):
+    if divergent:
+        cmap = cmc.vik.copy()
+        cmap.set_over("#d80011")
+        cmap.set_under("#1245fc")
+        if var == "pr":
+            cmap = cmap.reversed()
+    else:
+        cmap = plt.get_cmap("viridis").copy()
+        cmap.set_over("#bdaa00")
+        cmap.set_under("#ae00e3")
+    return cmap
+
+
+def plot_panel(
+    fig,
+    gs,
+    d,
+    d_ref,
+    var,
+    name,
+    name_p,
+    season,
+    xaxis=True,
+    yaxis=True,
+    colorbar=False,
+    colorbar_fit=False,
+    vlim1=None,
+    vlim2=None,
+    in_ensemble=False,
+    divergent=False,
+):
+    figsize = fig.get_size_inches()
+    attrs = ds.attrs(d, name)
+    label = misc.get_pretty_var_label(attrs["long_name"])
+    title = get_title(d)
+
+    if "crs" in ds.vars(d):
+        crs = ccrs.LambertConformal(
+            central_longitude=d["."]["crs"]["longitude_of_central_meridian"],
+            central_latitude=d["."]["crs"]["latitude_of_projection_origin"],
+            false_easting=d["."]["crs"]["false_easting"],
+            false_northing=d["."]["crs"]["false_northing"],
+            standard_parallels=(d["."]["crs"]["standard_parallel"],),
+        )
+        data_crs = crs
+    else:
+        crs = ccrs.LambertConformal(**LCC_PROJECTION)
+        data_crs = ccrs.PlateCarree()
+    ax = fig.add_subplot(gs, projection=crs)
+    ax.coastlines("50m", linewidth=0.4, alpha=0.9)
+    ax.add_feature(
+        cfeature.BORDERS, linewidth=0.3, edgecolor="black", alpha=0.8
+    )
+
+    if d_ref is None:
+        z = d[name]
+        z, units = misc.convert_pretty_units(z, attrs["units"])
+        if colorbar_fit:
+            cb_loc = [0.39, 2 / figsize[1], 0.45, 0.1 / figsize[1]]
+        else:
+            cb_loc = [0.125, 0.34 / figsize[1], 0.35, 0.1 / figsize[1]]
+        vlim = vlim1
+        cmap = get_cmap(var, divergent, vlim)
+    else:
+        z = d[name] - d_ref[name]
+        z, units = misc.convert_pretty_units(z, attrs["units"])
+        if colorbar_fit:
+            cb_loc = [0.39, 1.15 / figsize[1], 0.45, 0.1 / figsize[1]]
+        else:
+            cb_loc = [0.545, 0.34 / figsize[1], 0.35, 0.1 / figsize[1]]
+        label = "Anomaly from %s" % misc.get_source_title(ds.attrs(d_ref))
+        vlim = vlim2
+        cmap = get_cmap(var, True, vlim)
+
+    units_pretty = misc.get_pretty_units(units)
+
+    pvalue = d.get(name_p)
+
+    if "x" in d and "y" in d:
+        source_coordinates = "xy"
+        x = d["x"]
+        y = d["y"]
+        data_extent = [x[0], x[-1], y[0], y[-1]]
+    else:
+        source_coordinates = "lonlat"
+        lon = d["lon"]
+        lat = d["lat"]
+        order = np.argsort(lon)
+        lon = lon[order]
+        dlon = lon[1] - lon[0]
+        dlat = lat[1] - lat[0]
+        z = z[order, :]
+        data_extent = [
+            lon[0] - dlon,
+            lon[-1] + dlon,
+            lat[0] - dlat,
+            lat[-1] + dlat,
+        ]
+        z = z.T
+        z, _ = cartopy.util.add_cyclic_point(z, coord=lon)
+
+    im = plt.imshow(
+        z,
+        extent=data_extent,
+        origin="lower",
+        cmap=cmap,
+        vmin=vlim[0],
+        vmax=vlim[1],
+        interpolation="none",
+        transform=data_crs,
+    )
+
+    ax.set_extent([-10, 30, 33, 75], crs=ccrs.PlateCarree())
+
+    if pvalue is not None:
+        if source_coordinates == "lonlat":
+            xmin, xmax, ymin, ymax = plt.gca().get_extent()
+            x = np.arange(xmin, xmax + 100000, 100000)
+            y = np.arange(ymin, ymax + 100000, 100000)
+            xg, yg = np.meshgrid(x, y)
+            xg = xg.flatten()
+            yg = yg.flatten()
+            lonlat = ccrs.PlateCarree().transform_points(crs, xg, yg)
+            long = lonlat[:, 0] % 360
+            latg = lonlat[:, 1]
+            ii = np.searchsorted(lon, long)
+            jj = np.searchsorted(lat, latg)
+            ii[ii >= len(lon)] = len(lon) - 1
+            jj[jj >= len(lat)] = len(lat) - 1
+            pv = pvalue[ii, jj]
+        else:
+            x2 = np.arange(np.min(x), np.max(x) + 100000, 100000)
+            y2 = np.arange(np.min(y), np.max(y) + 100000, 100000)
+            xg, yg = np.meshgrid(x2, y2)
+            ii = np.searchsorted(x, x2)
+            jj = np.searchsorted(y, y2)
+            ii[ii >= len(x)] = len(x) - 1
+            jj[jj >= len(y)] = len(y) - 1
+            pv = pvalue[ii,][:, jj]
+        plt.scatter(
+            xg,
+            yg,
+            s=np.where(pv < 0.05, 0.5, 0),
+            color="k",
+            edgecolor="none",
+            alpha=0.3,
+            transform=crs,
+        )
+
+    gl = ax.gridlines(
+        draw_labels=True,
+        linewidth=0.5,
+        alpha=0.1,
+        color="k",
+        x_inline=False,
+        y_inline=False,
+        rotate_labels=False,
+    )
+    gl.xlocator = mticker.FixedLocator(np.arange(-180, 180 + 10, 10))
+    gl.ylocator = mticker.FixedLocator(np.arange(-90, 90 + 5, 5))
+    gl.top_labels = False
+    gl.right_labels = False
+
+    if not xaxis:
+        gl.bottom_labels = False
+    if not yaxis:
+        gl.left_labels = False
+
+    gl.xlabel_style = {"size": 8}
+    gl.ylabel_style = {"size": 8}
+
+    plt.text(
+        0.015,
+        0.93,
+        title,
+        transform=plt.gca().transAxes,
+        bbox=dict(
+            facecolor=(
+                COLORS[0] if in_ensemble or title == "ENS" else COLORS[1]
+            ),
+            edgecolor="none",
+            boxstyle="square,pad=0.1",
+            alpha=0.9,
+        ),
+        fontsize=9,
+        fontweight=("bold" if title == "ENS" else "normal"),
+    )
+
+    if colorbar:
+        cax = fig.add_axes(cb_loc)
+        extend = "max" if (var == "pr" and vlim[0] == 0) else "both"
+        cb = fig.colorbar(im, cax=cax, orientation="horizontal", extend=extend)
+        cb.set_label("%s (%s)" % (label, units_pretty))
+
+
+def read(input_, sources, var, name, name_p, season, period, index):
+    dd = []
+    vars = [name, name_p, "x", "y", "lon", "lat", "crs"]
+    for i, source in enumerate(sources):
+        dd1 = io.read_dataset(
+            input_,
+            {
+                "source": source,
+                "variable_id": var,
+                "season": season,
+                "start_year": period[0],
+                "end_year": period[1],
+            },
+            vars,
+            False,
+            index=index,
+        )
+        if len(dd1) == 0:
+            continue
+        assert len(dd1) == 1
+        d = dd1[0]
+        if var == "pr" and d["."]["."]["source_id"] == "CERRA":
+            continue
+        dd += [d]
+    return dd
+
+
+def is_gcm(d):
+    attrs = ds.attrs(d)
+    return "driving_source_id" not in attrs or attrs[
+        "driving_source_id"
+    ] not in [
+        "OBS",
+        "REAN",
+        "ERA5",
+    ]
+
+
+def get_figsize(nrows, ncols):
+    w = FIG_WIDTH
+    h = nrows * AXIS_HEIGHT + BOTTOM_MARGIN + TOP_MARGIN
+    return [w, h]
+
+
+def plot(type_, input_, sources, output, var, season, period, index):
+    name = var + "_" + type_
+    name_p = name + "_p"
+    dd = read(input_, sources, var, name, name_p, season, period, index)
+    d_ens = None
+    for d in dd:
+        if ds.attr(d, "source_id") == "ENS":
+            d_ens = d
+    ens_members = (
+        ds.attr(d_ens, "ensemble_members") if d_ens is not None else []
+    )
+
+    d_ref = None
+    if type_ != "trend":
+        if var == "psl":
+            try:
+                d_ref = [d for d in dd if d["."]["."]["source_id"] == "ERA5"][0]
+            except IndexError:
+                d_ref = dd[0]
+        else:
+            d_ref = dd[0]
+
+    n = len(dd)
+    ncols = NCOLS
+    nrows = int(np.ceil(n / ncols))
+    figsize = get_figsize(nrows, ncols)
+    fig = plt.figure(figsize=figsize)
+
+    gs = GridSpec(
+        nrows,
+        ncols,
+        hspace=0,
+        wspace=0,
+        bottom=(BOTTOM_MARGIN / figsize[1]),
+        top=(1 - TOP_MARGIN / figsize[1]),
+    )
+
+    vlim1, vlim2 = determine_vlims(dd, d_ref, name)
+
+    cb_abs = False
+    cb_rel = False
+    for i, d in enumerate(dd):
+        source = misc.get_source_name(ds.attrs(d))
+        row = i // ncols
+        col = i % ncols
+        plot_panel(
+            fig,
+            gs[i],
+            d,
+            (d_ref if d != d_ref else None),
+            var,
+            name,
+            name_p,
+            season,
+            xaxis=(row == nrows - 1 and col == 0),
+            yaxis=(row == nrows - 1 and col == 0),
+            colorbar=(d == d_ref and not cb_abs or d != d_ref and not cb_rel),
+            colorbar_fit=(len(dd) % ncols == 1),
+            vlim1=vlim1,
+            vlim2=vlim2,
+            in_ensemble=source in ens_members,
+            divergent=(type_ == "trend"),
+        )
+        cb_abs |= d == d_ref
+        cb_rel |= d != d_ref
+
+    title = "%s %d–%d" % (
+        season,
+        period[0],
+        period[1],
+    )
+    plt.suptitle(title, y=(1 - 0.7 * TOP_MARGIN / figsize[1]))
+    file = "%s_%s_%d-%d.pdf" % (
+        var,
+        season,
+        period[0],
+        period[1],
+    )
+    filename = os.path.join(output, file)
+    plt.savefig(filename, bbox_inches="tight")
+    print("-> %s" % filename)
+
+
+if __name__ == "__main__":
+    if len(sys.argv) < 5:
+        sys.stderr.write(sys.modules[__name__].__doc__)
+        sys.exit(1)
+
+    type_ = sys.argv[1]
+    input_ = sys.argv[2]
+    sources = sys.argv[3:-1]
+    output = sys.argv[-1]
+
+    with ProcessPoolExecutor() as ex:
+        index = io.list_dataset(input_, ex=ex)
+        futures = []
+        for var in VARS:
+            for season in SEASONS:
+                for period in PERIODS:
+                    futures += [
+                        ex.submit(
+                            plot,
+                            type_,
+                            input_,
+                            sources,
+                            output,
+                            var,
+                            season,
+                            period,
+                            index,
+                        )
+                    ]
+        for future in as_completed(futures):
+            future.result()
