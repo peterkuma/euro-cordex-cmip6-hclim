@@ -1,0 +1,8 @@
+Cartopy==0.23.0
+cmcrameri==1.9
+ds_format==4.3.0
+matplotlib==3.9.4
+numpy==2.0.2
+pyproj==3.6.1
+scipy==1.13.1
+aquarius_time==0.4.0
