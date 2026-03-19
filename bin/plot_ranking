@@ -23,12 +23,7 @@ import numpy as np
 from lib import misc
 from matplotlib.gridspec import GridSpec
 
-try:
-    mpl.font_manager.fontManager.addfont(
-        os.path.join(os.path.expanduser("~"), ".fonts", "OpenSans-Regular.ttf")
-    )
-except:
-    pass
+misc.load_mpl_fonts()
 
 mpl.rc("font", family="Droid Sans")
 mpl.rc("axes", linewidth=0.3)

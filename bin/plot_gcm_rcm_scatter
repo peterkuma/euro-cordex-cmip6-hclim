@@ -26,6 +26,8 @@ from matplotlib.gridspec import GridSpec
 from matplotlib.lines import Line2D
 from matplotlib.patches import FancyArrowPatch
 
+misc.load_mpl_fonts()
+
 mpl.rc("font", family="Open Sans")
 mpl.rc("axes", linewidth=0.3)
 mpl.rc("axes", grid=True)

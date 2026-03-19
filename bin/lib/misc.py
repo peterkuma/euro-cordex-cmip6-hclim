@@ -125,3 +125,17 @@ def normalize_monthly_time(time):
         ]
     )
     return time
+
+
+def load_mpl_fonts():
+    try:
+        for variant in ["Regular", "Bold"]:
+            mpl.font_manager.fontManager.addfont(
+                os.path.join(
+                    os.path.expanduser("~"),
+                    ".fonts",
+                    "OpenSans-%s.ttf" % variant,
+                )
+            )
+    except:
+        pass

@@ -32,15 +32,7 @@ from matplotlib.gridspec import GridSpec
 from pyproj import CRS
 from pyproj.transformer import transform
 
-try:
-    for variant in ["Regular", "Bold"]:
-        mpl.font_manager.fontManager.addfont(
-            os.path.join(
-                os.path.expanduser("~"), ".fonts", "OpenSans-%s.ttf" % variant
-            )
-        )
-except:
-    pass
+misc.load_mpl_fonts()
 
 mpl.rc("font", family="Open Sans")
 mpl.rc("axes", linewidth=0.3)
