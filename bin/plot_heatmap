@@ -12,16 +12,20 @@ Arguments:
 
 import signal
 
+from numpy._typing import _128Bit
+
 signal.signal(signal.SIGINT, signal.SIG_DFL)
 
 import os
 import sys
+import warnings
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 import cmcrameri.cm as cmc
 import ds_format as ds
 import matplotlib as mpl
 import numpy as np
+import scipy as sp
 from lib import io, misc
 from matplotlib import pyplot as plt
 from matplotlib.gridspec import GridSpec
@@ -116,8 +120,28 @@ def determine_vlims(values, ref):
     return vlim1, vlim2
 
 
+def calc_pvalue(values_ts, ref):  # d, d_ref, name, name_p, name_ts):
+    pvalue = np.full(values_ts.shape[:-1], np.nan)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=RuntimeWarning)
+        for i in range(values_ts.shape[1]):
+            if i == ref:
+                continue
+            _, pvalue[:, i, :] = sp.stats.ttest_rel(
+                values_ts[:, i, :, :], values_ts[:, ref, :, :], axis=2
+            )
+    return pvalue
+
+
+def get_text_color(value, cmap, norm):
+    r, g, b, _ = cmap(norm(value))
+    lightness = 0.299 * r + 0.587 * g + 0.114 * b
+    return "k" if lightness > 0.5 else "w"
+
+
 def plot_panel(
     values,
+    pvalue,
     labels,
     ensemble_mask,
     regions,
@@ -173,15 +197,24 @@ def plot_panel(
         aspect=aspect,
     )
 
+    # Plot pvalue.
+    s = 0.5
+    a = dict(linewidth=0.3, alpha=0.4)
+    for i in range(n):
+        for j in range(m):
+            if pvalue[i, j] >= 0.05:
+                im = im_abs if i == ref else im_rel
+                color = get_text_color(values_combined[i, j], im.cmap, im.norm)
+                plt.plot([j - s, j + s], [i - s, i + s], color=color, **a)
+                plt.plot([j + s, j - s], [i - s, i + s], color=color, **a)
+
     plt.yticks(ii, np.arange(1, n + 1))
     plt.xticks(jj, regions)
     for i in range(n):
         for j in range(m):
             value = values_combined[i, j]
             im = im_abs if i == ref else im_rel
-            r, g, b, _ = im.cmap(im.norm(value))
-            lightness = 0.299 * r + 0.587 * g + 0.114 * b
-            color = "k" if lightness > 0.5 else "w"
+            color = get_text_color(value, im.cmap, im.norm)
             plt.text(
                 j,
                 i,
@@ -227,7 +260,7 @@ def plot_panel(
 
 
 def read(index, source, var, season, region, period):
-    vars = [var + "_mean"]
+    vars = [var + "_mean", var + "_mean_ts"]
     dd = io.read_dataset(
         input_,
         {
@@ -312,15 +345,17 @@ def get_ref(var, labels):
 
 def plot(input_, index, output, var, sources, period):
     regions = list(misc.REGIONS.keys())
-    l = len(SEASONS)
-    n = len(sources) + 1
-    ens_i = n - 1  # Ensemble mean at the end.
-    m = len(misc.REGIONS)
-    values = np.full((l, n, m), np.nan)
-    attrs_array = np.full(n, None, object)
-    labels = np.full(n, None, object)
-    mask = np.full(n, False, bool)
-    ens_mask = np.full(n, False, bool)
+    nseasons = len(SEASONS)
+    nsources = len(sources) + 1
+    ens_i = nsources - 1  # Ensemble mean at the end.
+    nregions = len(misc.REGIONS)
+    nyears = period[1] - period[0] + 1
+    values = np.full((nseasons, nsources, nregions), np.nan)
+    values_ts = np.full((nseasons, nsources, nregions, nyears), np.nan)
+    attrs_array = np.full(nsources, None, object)
+    labels = np.full(nsources, None, object)
+    mask = np.full(nsources, False, bool)
+    ens_mask = np.full(nsources, False, bool)
     long_name = None
     units = None
 
@@ -331,7 +366,9 @@ def plot(input_, index, output, var, sources, period):
                 if d is None:
                     continue
                 name = var + "_mean"
+                name_ts = var + "_mean_ts"
                 values[k, i, j] = d[name]
+                values_ts[k, i, j, :] = d[name_ts]
                 attrs_array[i] = ds.attrs(d)
                 labels[i] = get_title(d)
                 long_name = ds.attr(d, "long_name", var=name)
@@ -342,31 +379,35 @@ def plot(input_, index, output, var, sources, period):
     ens_mask = get_ensemble_mask(attrs_array)
     for k, season in enumerate(SEASONS):
         values[k, ens_i] = calc_ensemble_mean(values[k, ens_mask])
+        values_ts[k, ens_i] = calc_ensemble_mean(values_ts[k, ens_mask])
     labels[ens_i] = "ENS"
     mask[ens_i] = True
     ens_i_new = get_ensemble_position(attrs_array)
-    order = np.arange(n)
+    order = np.arange(nsources)
     order[ens_i_new] = ens_i
-    order[(ens_i_new + 1) :] = np.arange(ens_i_new, n - 1)
+    order[(ens_i_new + 1) :] = np.arange(ens_i_new, nsources - 1)
     values = values[:, order]
+    values_ts = values_ts[:, order]
     labels = labels[order]
     ens_mask = ens_mask[order]
     attrs_array = attrs_array[order]
 
     # Remove empty sources.
     values = values[:, mask]
+    values_ts = values_ts[:, mask]
     labels = labels[mask]
     ens_mask = ens_mask[mask]
     attrs_array = attrs_array[mask]
-    n = len(labels)
+    nsources = len(labels)
 
     ref = get_ref(var, list(labels))
+    pvalue = calc_pvalue(values_ts, ref)
     values_pretty, units_pretty = misc.convert_pretty_units(values, units)
     vlim_abs, vlim_rel = determine_vlims(values_pretty, ref)
 
     aspect = 1.2 if var == "psl" else 1
-    panel_height = n * 0.3
-    panel_width = m * 0.3 * aspect
+    panel_height = nsources * 0.3
+    panel_width = nregions * 0.3 * aspect
     hspace = 1.2
     wspace = 0.8
     fig_height = 2 * panel_height + hspace
@@ -383,6 +424,7 @@ def plot(input_, index, output, var, sources, period):
         plt.subplot(gs[k if k < 3 else k + 1])
         plot_panel(
             values_pretty[k],
+            pvalue[k],
             labels,
             ens_mask,
             regions,
