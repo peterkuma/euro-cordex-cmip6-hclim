@@ -16,6 +16,7 @@ signal.signal(signal.SIGINT, signal.SIG_DFL)
 
 import os
 import sys
+import warnings
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 import cartopy.crs as ccrs
@@ -27,6 +28,7 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import numpy as np
+import scipy as sp
 from lib import io, misc
 from matplotlib.gridspec import GridSpec
 from pyproj import CRS
@@ -50,6 +52,9 @@ mpl.rc("grid", alpha=0.2)
 mpl.rc("grid", lw=0.1)
 mpl.rc("hatch", linewidth=0.05)
 mpl.rc("hatch", color="#000000a0")
+
+# Only consider latitudes above this number when determining value limits.
+VLIM_CUTOFF_LAT = 37.4  # Exclude Africa
 
 NCOLS = 4
 
@@ -91,24 +96,16 @@ LCC_PROJECTION = {
     "standard_parallels": [49.5],
 }
 
-COLORS = ["#f5f592", "#DDDDDD"]
+COLORS = ["#71f4ff", "#DDDDDD"]
 
 
-def get_rounding(x):
-    if x < 100:
-        return 1
-    else:
-        return 10
-
-
-def get_vlim(x, sym=False):
+def get_vlim(x, sym=False, percentile=2, mask=None):
     if isinstance(x, np.ma.MaskedArray):
         x = x.filled(np.nan)
-    low = np.nanpercentile(x, 2)
-    high = np.nanpercentile(x, 98)
-    r = get_rounding(max(np.abs(low), np.abs(high)))
-    low = np.floor(low / r) * r
-    high = np.ceil(high / r) * r
+    if mask is not None:
+        x[~mask] = np.nan
+    low = np.nanpercentile(x, percentile)
+    high = np.nanpercentile(x, 100 - percentile)
     if sym:
         y = max(abs(low), abs(high))
         return [-y, y]
@@ -116,23 +113,50 @@ def get_vlim(x, sym=False):
         return [low, high]
 
 
-def determine_vlims(dd, d_ref, name):
+def get_cmap(var, divergent, vlim):
+    locator = mpl.ticker.MaxNLocator(nbins=16, steps=[1, 2, 2.5, 5, 10])
+    bounds = locator.tick_values(vlim[0], vlim[1])
+    n = len(bounds) - 1
+    if divergent:
+        cmap = plt.get_cmap("Spectral_r", n).copy()
+        cmap.set_over("#600027")
+        cmap.set_under("#322a56")
+    else:
+        cmap = plt.get_cmap("rainbow", n).copy()
+        cmap.set_over("#8d0000")
+        cmap.set_under("#44008c")
+    if var == "pr":
+        cmap = cmap.reversed()
+    return cmap, bounds
+
+
+def determine_bounds_cmaps(dd, d_ref, var, name, divergent):
     vlim1 = [np.inf, -np.inf]
     vlim2 = [np.inf, -np.inf]
     for d in dd:
         units = ds.attr(d, "units", var=name)
+        mask = d["lat"] >= VLIM_CUTOFF_LAT
         if d_ref is None or d == d_ref:
             z = d[name]
             z, _ = misc.convert_pretty_units(z, units)
-            vlim = get_vlim(z, d_ref == None)
+            vlim = get_vlim(z, d_ref == None, mask=mask)
             vlim1 = [min(vlim1[0], vlim[0]), max(vlim1[1], vlim[1])]
         else:
-            z = d[name] - d_ref[name]
-            z, _ = misc.convert_pretty_units(z, units)
-            vlim = get_vlim(z, True)
+            if var == "pr":
+                # z = (d[name] - d_ref[name]) / d_ref[name] * 100
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", category=RuntimeWarning)
+                    z = np.log(d[name] / d_ref[name])
+                vlim = get_vlim(z, True, 15, mask=mask)
+            else:
+                z = d[name] - d_ref[name]
+                z, _ = misc.convert_pretty_units(z, units)
+                vlim = get_vlim(z, True, mask=mask)
             y = max(vlim2[1], vlim[1])
             vlim2 = [-y, y]
-    return vlim1, vlim2
+    cmap1, bounds1 = get_cmap(var, divergent, vlim1)
+    cmap2, bounds2 = get_cmap(var, True, vlim2)
+    return bounds1, bounds2, cmap1, cmap2
 
 
 def get_title(d):
@@ -143,20 +167,6 @@ def get_title(d):
         return title
 
 
-def get_cmap(var, divergent, vlim):
-    if divergent:
-        cmap = cmc.vik.copy()
-        cmap.set_over("#d80011")
-        cmap.set_under("#1245fc")
-        if var == "pr":
-            cmap = cmap.reversed()
-    else:
-        cmap = plt.get_cmap("viridis").copy()
-        cmap.set_over("#bdaa00")
-        cmap.set_under("#ae00e3")
-    return cmap
-
-
 def plot_panel(
     fig,
     gs,
@@ -165,20 +175,23 @@ def plot_panel(
     var,
     name,
     name_p,
+    name_ts,
     season,
     xaxis=True,
     yaxis=True,
     colorbar=False,
     colorbar_fit=False,
-    vlim1=None,
-    vlim2=None,
+    bounds1=None,
+    bounds2=None,
+    cmap1=None,
+    cmap2=None,
     in_ensemble=False,
-    divergent=False,
 ):
     figsize = fig.get_size_inches()
     attrs = ds.attrs(d, name)
     label = misc.get_pretty_var_label(attrs["long_name"])
     title = get_title(d)
+    pvalue = None
 
     if "crs" in ds.vars(d):
         crs = ccrs.LambertConformal(
@@ -202,25 +215,33 @@ def plot_panel(
         z = d[name]
         z, units = misc.convert_pretty_units(z, attrs["units"])
         if colorbar_fit:
-            cb_loc = [0.39, 2 / figsize[1], 0.45, 0.1 / figsize[1]]
+            cb_loc = [0.335, 2 / figsize[1], 0.56, 0.1 / figsize[1]]
         else:
             cb_loc = [0.125, 0.34 / figsize[1], 0.35, 0.1 / figsize[1]]
-        vlim = vlim1
-        cmap = get_cmap(var, divergent, vlim)
+        bounds = bounds1
+        cmap = cmap1
     else:
-        z = d[name] - d_ref[name]
-        z, units = misc.convert_pretty_units(z, attrs["units"])
+        if var == "pr":
+            z = (d[name] - d_ref[name]) / d_ref[name] * 100
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", category=RuntimeWarning)
+                z = np.log(d[name] / d_ref[name])
+            units = "%"
+        else:
+            z = d[name] - d_ref[name]
+            z, units = misc.convert_pretty_units(z, attrs["units"])
         if colorbar_fit:
-            cb_loc = [0.39, 1.15 / figsize[1], 0.45, 0.1 / figsize[1]]
+            cb_loc = [0.335, 1.15 / figsize[1], 0.56, 0.1 / figsize[1]]
         else:
             cb_loc = [0.545, 0.34 / figsize[1], 0.35, 0.1 / figsize[1]]
         label = "Anomaly from %s" % misc.get_source_title(ds.attrs(d_ref))
-        vlim = vlim2
-        cmap = get_cmap(var, True, vlim)
+        bounds = bounds2
+        cmap = cmap2
 
     units_pretty = misc.get_pretty_units(units)
 
-    pvalue = d.get(name_p)
+    if name_p in d:
+        pvalue = d[name_p]
 
     if "x" in d and "y" in d:
         source_coordinates = "xy"
@@ -250,8 +271,8 @@ def plot_panel(
         extent=data_extent,
         origin="lower",
         cmap=cmap,
-        vmin=vlim[0],
-        vmax=vlim[1],
+        vmin=bounds[0],
+        vmax=bounds[-1],
         interpolation="none",
         transform=data_crs,
     )
@@ -283,13 +304,14 @@ def plot_panel(
             ii[ii >= len(x)] = len(x) - 1
             jj[jj >= len(y)] = len(y) - 1
             pv = pvalue[ii,][:, jj]
+        mask = pv >= 0.05
         plt.scatter(
-            xg,
-            yg,
-            s=np.where(pv < 0.05, 0.5, 0),
+            xg[mask],
+            yg[mask],
+            s=4,
+            lw=0.1,
             color="k",
-            edgecolor="none",
-            alpha=0.3,
+            marker="x",
             transform=crs,
         )
 
@@ -334,14 +356,36 @@ def plot_panel(
 
     if colorbar:
         cax = fig.add_axes(cb_loc)
-        extend = "max" if (var == "pr" and vlim[0] == 0) else "both"
-        cb = fig.colorbar(im, cax=cax, orientation="horizontal", extend=extend)
-        cb.set_label("%s (%s)" % (label, units_pretty))
+        extend = "max" if (var == "pr" and bounds[0] == 0) else "both"
+        if var == "psl" and d_ref is None:
+            fmt = mpl.ticker.FuncFormatter(lambda x, pos: f"{int(x) % 100:2d}")
+            units_pretty = units_pretty + "; last two digits"
+        elif var == "pr" and d_ref is not None:
+            fmt = mpl.ticker.FuncFormatter(
+                lambda x, pos: f"{100 * (np.exp(x) - 1):.0f}"
+            )
+        else:
+            fmt = mpl.ticker.FuncFormatter(
+                lambda x, pos: f"{x:.10f}".rstrip("0").rstrip(".")
+            )
+        cb = fig.colorbar(
+            im,
+            cax=cax,
+            orientation="horizontal",
+            extend=extend,
+            ticks=bounds,
+            format=fmt,
+        )
+        cb_label = label
+        if units_pretty != "":
+            cb_label += " (%s)" % units_pretty
+        cb.set_label(cb_label)
+        cb.ax.tick_params(labelsize=8)
 
 
-def read(input_, sources, var, name, name_p, season, period, index):
+def read(input_, sources, var, name, name_p, name_ts, season, period, index):
     dd = []
-    vars = [name, name_p, "x", "y", "lon", "lat", "crs"]
+    vars = [name, name_p, name_ts, "x", "y", "lon", "lat", "crs"]
     for i, source in enumerate(sources):
         dd1 = io.read_dataset(
             input_,
@@ -383,10 +427,28 @@ def get_figsize(nrows, ncols):
     return [w, h]
 
 
+def calc_pvalue(d, d_ref, name, name_p, name_ts):
+    if d is d_ref:
+        return
+    mask = ~d_ref[name].mask
+    pvalue = np.full(d[name].shape, np.nan)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=RuntimeWarning)
+        _, pvalue_m = sp.stats.ttest_rel(
+            d[name_ts][:, mask], d_ref[name_ts][:, mask], axis=0
+        )
+    pvalue[mask] = pvalue_m
+    d[name_p] = pvalue
+    return d
+
+
 def plot(type_, input_, sources, output, var, season, period, index):
     name = var + "_" + type_
     name_p = name + "_p"
-    dd = read(input_, sources, var, name, name_p, season, period, index)
+    name_ts = name + "_ts"
+    dd = read(
+        input_, sources, var, name, name_p, name_ts, season, period, index
+    )
     d_ens = None
     for d in dd:
         if ds.attr(d, "source_id") == "ENS":
@@ -405,6 +467,19 @@ def plot(type_, input_, sources, output, var, season, period, index):
         else:
             d_ref = dd[0]
 
+    if type_ == "mean":
+        with ProcessPoolExecutor() as ex:
+            futures = []
+            for d in dd:
+                futures += [
+                    ex.submit(calc_pvalue, d, d_ref, name, name_p, name_ts)
+                ]
+            for future in as_completed(futures):
+                d = future.result()
+                i = futures.index(future)
+                if d is not None:
+                    dd[i] = d
+
     n = len(dd)
     ncols = NCOLS
     nrows = int(np.ceil(n / ncols))
@@ -420,7 +495,9 @@ def plot(type_, input_, sources, output, var, season, period, index):
         top=(1 - TOP_MARGIN / figsize[1]),
     )
 
-    vlim1, vlim2 = determine_vlims(dd, d_ref, name)
+    bounds1, bounds2, cmap1, cmap2 = determine_bounds_cmaps(
+        dd, d_ref, var, name, type_ == "trend"
+    )
 
     cb_abs = False
     cb_rel = False
@@ -436,15 +513,17 @@ def plot(type_, input_, sources, output, var, season, period, index):
             var,
             name,
             name_p,
+            name_ts,
             season,
             xaxis=(row == nrows - 1 and col == 0),
             yaxis=(row == nrows - 1 and col == 0),
             colorbar=(d == d_ref and not cb_abs or d != d_ref and not cb_rel),
             colorbar_fit=(len(dd) % ncols == 1),
-            vlim1=vlim1,
-            vlim2=vlim2,
+            bounds1=bounds1,
+            bounds2=bounds2,
+            cmap1=cmap1,
+            cmap2=cmap2,
             in_ensemble=source in ens_members,
-            divergent=(type_ == "trend"),
         )
         cb_abs |= d == d_ref
         cb_rel |= d != d_ref
