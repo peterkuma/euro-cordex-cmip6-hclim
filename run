@@ -83,7 +83,7 @@ source_links)
 			for path in ${items[@]:1}; do
 				for file in "$path"/*.nc; do
 					if [ -e "$file" ]; then
-						ln -fs "$file" -t "input/sources/$name/"
+						cmd ln -fs "$file" -t "input/sources/$name/"
 					fi
 				done
 			done
@@ -93,7 +93,7 @@ source_links)
 
 remap_landmask)
 	mkdir -p data/landmask
-	cdo \
+	cmd cdo \
 		remapbil,r360x180 \
 		input/landmask/sftlf_EUR-12_ERA5_evaluation_r1i1p1f1_HCLIMcom-SMHI_HCLIM43-ALADIN_v1-r1_fx.nc \
 	 	data/landmask/sftlf_EUR-12_ERA5_evaluation_r1i1p1f1_HCLIMcom-SMHI_HCLIM43-ALADIN_v1-r1_fx_1x1deg.nc
@@ -116,7 +116,7 @@ ensemble)
 	cmd bin/ensemble input/sources $(cat sources/list/gcm_ensemble) data/ensembles
 	run
 	for file in data/ensembles/*; do
-		ln -sf "../../data/ensembles/$(basename "$file")" -t input/sources
+		cmd ln -sf "../../data/ensembles/$(basename "$file")" -t input/sources
 	done
 	;;
 
@@ -129,8 +129,8 @@ calc_stats)
 		done
 	done
 	run
-	bin/index data/stats/{hclim,gcm}/period_season
-	bin/index data/stats/{hclim,gcm}/period_season_region
+	cmd bin/index data/stats/{hclim,gcm}/period_season
+	cmd bin/index data/stats/{hclim,gcm}/period_season_region
 	;;
 
 plot_map)
@@ -144,7 +144,7 @@ plot_map)
 	done
 	run
 	for type_ in hclim gcm; do
-		convert_png "plot/map/$type_"
+		cmd convert_png "plot/map/$type_"
 	done
 	;;
 
@@ -160,47 +160,50 @@ plot_trend)
 	done
 	run
 	for type_ in hclim gcm; do
-		convert_png "plot/trend/$type_"
+		cmd convert_png "plot/trend/$type_"
 	done
 	;;
 
 plot_heatmap)
 	mkdir -p plot/heatmap
-	bin/plot_heatmap \
+	cmd bin/plot_heatmap \
 		data/stats/hclim/period_season_region \
 		$(cat sources/list/{obs,hclim}) \
 		plot/heatmap
-	convert_png plot/heatmap
+	run
+	cmd convert_png plot/heatmap
 	;;
 
 plot_boxplot)
 	mkdir -p plot/boxplot
-	bin/plot_boxplot \
+	cmd bin/plot_boxplot \
 		data/stats/hclim/period_season_region \
 		$(cat sources/list/{obs,hclim}) \
 		1991 2020 \
 		plot/boxplot
-	convert_png plot/boxplot
 	mkdir -p plot/boxplot_relative
-	bin/plot_boxplot_relative \
+	cmd bin/plot_boxplot_relative \
 		data/stats/hclim/period_season_region \
 		$(cat sources/list/{obs,hclim}) \
 		1991 2020 \
 		plot/boxplot_relative
-	convert_png plot/boxplot_relative
+	run
+	cmd convert_png plot/boxplot
+	cmd convert_png plot/boxplot_relative
 	;;
 
 plot_gcm_rcm_scatter)
-	bin/plot_gcm_rcm_scatter \
+	cmd bin/plot_gcm_rcm_scatter \
 		data/stats/{gcm,hclim}/period_season_region \
 		$(cat sources/list/hclim) \
 		1991 2020 \
 		plot/gcm_rcm_scatter.pdf
-	convert_png plot
+	run
+	cmd convert_png plot
 	;;
 
 model_ranking)
-	bin/model_ranking \
+	cmd bin/model_ranking \
 		data/stats/hclim/period_season_region \
 		$(cat sources/list/{obs,hclim}) \
 		1991 2020 \
@@ -208,7 +211,7 @@ model_ranking)
 	;;
 
 plot_ranking)
-	bin/plot_ranking data/model_ranking.nc plot/model_ranking.pdf
+	cmd bin/plot_ranking data/model_ranking.nc plot/model_ranking.pdf
 	;;
 
 *)
