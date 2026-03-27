@@ -2,15 +2,30 @@
 set -e
 shopt -s nullglob
 
-njobs=0
+njobs=$(nproc)
 
 task=$1
 
 export PARALLEL=--no-notice
 
-# Specific modules to load on the Freja SMHI cluster:
-module load parallel/20220722-hpc1-gcc-2022a-eb || true
-module load CDO/2.3.0-eccodes-aec-cmor-fftw-hpc2-intel-2023a-eb || true
+LISTS=(
+	hclim_historical+ssp126
+	hclim_historical+ssp370
+	gcm_historical+ssp126
+)
+
+LISTS_MEAN=(
+	hclim_historical+ssp126
+)
+
+LISTS_DIFF=(
+    hclim_historical+ssp370
+)
+
+SUBTYPES=(
+    period_season
+    period_season_region
+)
 
 tmp=$(mktemp)
 tmp_final=$(mktemp)
@@ -28,11 +43,11 @@ run () {
 
 calc_stats () {
 	local input=$1
-	local type_=$2
+	local list=$2
 	local subtype=$3
 	local out=$4
 	mkdir -p "$out"
-	for source in $(cat "sources/list/${type_}"); do
+	for source in $(cat "sources/list/${list}"); do
 		cmd bin/calc_stats "$subtype" "$input/$source" "$source" "$out"
 	done
 }
@@ -62,9 +77,11 @@ Tasks:
   remap_obs             Remap observatiosn to a 1x1 degree grid for GCM calculations.
   ensemble              Create an model ensemble.
   calc_stats            Calculate statistics (dep: source_links, remap_landmask, remap_obs, ensemble).
-  plot_map              Plot maps from the statistics (dep: calc_stats).
-  plot_trend            Plot linear trends (dep: calc_stats).
-  plot_heatmap          Plot heatmaps (dep: calc_stats).
+  plot_map_mean         Plot maps for means (dep: calc_stats).
+  plot_map_trend        Plot maps for linear trends (dep: calc_stats).
+  plot_map_diff         Plot maps for differences between time periods (dep: calc_stats).
+  plot_heatmap_mean     Plot heatmaps for means (dep: calc_stats).
+  plot_heatmap_diff     Plot heatmaps for differences between time periods (dep: calc_stats).
   plot_boxplot          Plot boxplots with statistics (dep: calc_stats).
   plot_gcm_rcm_scatter  Plot GCM-RCM scatter plot for temperature and precipitation (dep: calc_stats).
   model_ranking         Calculate model ranking (dep: calc_stats).
@@ -74,21 +91,19 @@ EOF
 	;;
 
 source_links)
-	for type_ in hclim gcm; do
-		mkdir -p input/sources
-		while read -r line; do
-			items=($line)
-			name=${items[0]}
-			mkdir -p "input/sources/$name"
-			for path in ${items[@]:1}; do
-				for file in "$path"/*.nc; do
-					if [ -e "$file" ]; then
-						cmd ln -fs "$file" -t "input/sources/$name/"
-					fi
-				done
+	mkdir -p input/sources
+	while read -r line; do
+		items=($line)
+		name=${items[0]}
+		mkdir -p "input/sources/$name"
+		for path in ${items[@]:1}; do
+			for file in "$path"/*.nc; do
+				if [ -e "$file" ]; then
+					cmd ln -fs "$file" -t "input/sources/$name/"
+				fi
 			done
-		done < "sources/paths"
-	done
+		done
+	done < "sources/paths"
 	;;
 
 remap_landmask)
@@ -112,8 +127,9 @@ remap_obs)
 	;;
 
 ensemble)
-	cmd bin/ensemble input/sources $(cat sources/list/hclim_ensemble) data/ensembles
-	cmd bin/ensemble input/sources $(cat sources/list/gcm_ensemble) data/ensembles
+    for list in "${LISTS[@]}"; do
+        cmd bin/ensemble input/sources $(cat "sources/list/$list") data/ensembles
+    done
 	run
 	for file in data/ensembles/*; do
 		cmd ln -sf "../../data/ensembles/$(basename "$file")" -t input/sources
@@ -121,91 +137,104 @@ ensemble)
 	;;
 
 calc_stats)
-	for type_ in hclim gcm; do
-		for subtype in period_season period_season_region; do
-			calc_stats input/sources "$type_" "$subtype" data/stats/$type_/$subtype
-			input=$([[ $type_ = gcm ]] && echo data/1deg || echo input/sources)
-			calc_stats "$input" obs "$subtype" data/stats/$type_/$subtype
+	#for list in "${LISTS[@]}"; do
+	for list in hclim_historical+ssp126; do
+		for subtype in "${SUBTYPES[@]}"; do
+			calc_stats input/sources "$list" "$subtype" data/stats/$list/$subtype
+			input=$([[ $list = gcm_historical+ssp126 ]] \
+				&& echo data/1deg || echo input/sources)
+			calc_stats "$input" obs "$subtype" data/stats/$list/$subtype
 		done
 	done
 	run
-	cmd bin/index data/stats/{hclim,gcm}/period_season
-	cmd bin/index data/stats/{hclim,gcm}/period_season_region
+	for list in "${LISTS[@]}"; do
+	    cmd bin/index "data/stats/$list/period_season"
+		cmd bin/index "data/stats/$list/period_season_region"
+	done
 	;;
 
-plot_map)
-	for type_ in hclim gcm; do
-		mkdir -p "plot/map/$type_"
+plot_map_mean)
+	for list in "${LISTS_MEAN[@]}"; do
+		mkdir -p "plot/map/$list"
 		cmd bin/plot_map \
 			mean \
-			"data/stats/$type_/period_season" \
-			$(cat sources/list/{obs,"${type_}"}) \
-			"plot/map/$type_"
-	done
-	run
-	for type_ in hclim gcm; do
-		cmd convert_png "plot/map/$type_"
+			"data/stats/$list/period_season" \
+			$(cat sources/list/{obs,"$list"}) \
+			"plot/map/$list"
 	done
 	;;
 
-plot_trend)
-	for type_ in hclim gcm; do
-		out=plot/trend/$type_
+plot_map_trend)
+	for list in "${LISTS_MEAN[@]}"; do
+		out=plot/trend/$list
 		mkdir -p "$out"
 		cmd bin/plot_map \
 			trend \
-			"data/stats/$type_/period_season" \
-			$(cat sources/list/{obs,"${type_}"}) \
+			"data/stats/$list/period_season" \
+			$(cat sources/list/{obs,"${list}"}) \
 			"$out"
-	done
-	run
-	for type_ in hclim gcm; do
-		cmd convert_png "plot/trend/$type_"
 	done
 	;;
 
-plot_heatmap)
-	mkdir -p plot/heatmap
-	cmd bin/plot_heatmap \
-		data/stats/hclim/period_season_region \
-		$(cat sources/list/{obs,hclim}) \
-		plot/heatmap
-	run
-	cmd convert_png plot/heatmap
+plot_map_diff)
+	for list in "${LISTS_DIFF[@]}"; do
+		mkdir -p "plot/diff/$list"
+		cmd bin/plot_map \
+			diff \
+			"data/stats/$list/period_season" \
+			$(cat "sources/list/$list") \
+			"plot/diff/$list"
+	done
 	;;
+
+plot_heatmap_mean)
+	mkdir -p plot/heatmap
+	for list in "${LISTS_MEAN}"; do
+    	cmd bin/plot_heatmap \
+    	    mean \
+    		"data/stats/$list/period_season_region" \
+    		$(cat sources/list/{obs,"$list"}) \
+    		"plot/heatmap/$list"
+	done
+    ;;
+
+plot_heatmap_diff)
+     for list in "${LISTS_DIFF}"; do
+       	cmd bin/plot_heatmap \
+       	    diff \
+      		"data/stats/$list/period_season_region" \
+      		$(cat "sources/list/$list") \
+      		"plot/heatmap/$list"
+    done
+    ;;
 
 plot_boxplot)
 	mkdir -p plot/boxplot
 	cmd bin/plot_boxplot \
-		data/stats/hclim/period_season_region \
-		$(cat sources/list/{obs,hclim}) \
+		data/stats/hclim_historical+ssp126/period_season_region \
+		$(cat sources/list/{obs,hclim_historical+ssp126}) \
 		1991 2020 \
 		plot/boxplot
 	mkdir -p plot/boxplot_relative
 	cmd bin/plot_boxplot_relative \
-		data/stats/hclim/period_season_region \
-		$(cat sources/list/{obs,hclim}) \
+		data/stats/hclim_historical+ssp126/period_season_region \
+		$(cat sources/list/{obs,hclim_historical+ssp126}) \
 		1991 2020 \
 		plot/boxplot_relative
-	run
-	cmd convert_png plot/boxplot
-	cmd convert_png plot/boxplot_relative
 	;;
 
 plot_gcm_rcm_scatter)
 	cmd bin/plot_gcm_rcm_scatter \
-		data/stats/{gcm,hclim}/period_season_region \
-		$(cat sources/list/hclim) \
+		data/stats/{gcm_historical+ssp126,hclim_historical+ssp126}/period_season_region \
+		$(cat sources/list/hclim_historical+ssp126) \
 		1991 2020 \
 		plot/gcm_rcm_scatter.pdf
-	run
-	cmd convert_png plot
 	;;
 
 model_ranking)
 	cmd bin/model_ranking \
-		data/stats/hclim/period_season_region \
-		$(cat sources/list/{obs,hclim}) \
+		data/stats/hclim_historical+ssp126/period_season_region \
+		$(cat sources/list/{obs,hclim_historical+ssp126}) \
 		1991 2020 \
 		data/model_ranking.nc
 	;;

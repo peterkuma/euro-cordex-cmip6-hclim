@@ -44,10 +44,10 @@ AUX_VARS = [
 
 VARS = [
     "pr",
-    "psl",
+    # "psl",
     "tas",
-    "tasmax",
-    "tasmin",
+    # "tasmax",
+    # "tasmin",
 ]
 
 # The season months must be continuous.
@@ -68,12 +68,13 @@ SEASON_YEAR_OFFSET = {
 }
 
 PERIODS = [
-    [1981, 2020],
+    # [1981, 2020],
     [1991, 2020],
-    [1995, 2014],
-    [2021, 2040],
-    [2041, 2060],
-    [2081, 2100],
+    # [1995, 2014],
+    # [2021, 2040],
+    # [2041, 2060],
+    # [2071, 2100],
+    # [2081, 2100],
 ]
 
 VAR_ATTRS_BLACKLIST = ["missing_value", "_FillValue"]
@@ -246,11 +247,7 @@ def calc_annual_stat(stat_type, d, do, var, period, season):
 
     do["year"] = d2["season_year"]
 
-    try:
-        assert np.array_equal(do["year"], years)
-    except AssertionError:
-        print(var, len(do["year"]), len(years), do["year"], years)
-        raise
+    assert np.array_equal(do["year"], years)
 
     do["time_bnds"] = np.full((n, 2), np.nan)
     for i, y in enumerate(do["year"]):
@@ -549,7 +546,10 @@ def process(
                 file += "_" + region_code
             file += "_stat.nc"
             output_filename = os.path.join(output, file)
-            os.remove(output_filename)
+            try:
+                os.remove(output_filename)
+            except FileNotFoundError:
+                pass
             ds.write(
                 output_filename,
                 do,

@@ -5,6 +5,9 @@ import re
 import aquarius_time as aq
 import ds_format as ds
 import numpy as np
+from matplotlib.legend_handler import HandlerTuple
+from matplotlib.lines import Line2D
+from matplotlib.patches import Rectangle
 
 SOURCE_PREFIX = {
     "HCLIM43-ALADIN": "HC",
@@ -139,3 +142,39 @@ def load_mpl_fonts():
             )
     except:
         pass
+
+
+class SquareHandlerTuple(HandlerTuple):
+    def create_artists(
+        self,
+        legend,
+        orig_handle,
+        xdescent,
+        ydescent,
+        width,
+        height,
+        fontsize,
+        trans,
+    ):
+        size = min(width, height)
+        x0 = xdescent + (width - size) / 2
+        y0 = ydescent + (height - size) / 2
+        a = []
+        for h in orig_handle:
+            if isinstance(h, Rectangle):
+                a += [
+                    Rectangle(
+                        (x0, y0),
+                        size,
+                        size,
+                        fill=h.get_fill(),
+                        facecolor=h.get_facecolor(),
+                        edgecolor=h.get_edgecolor(),
+                        transform=trans,
+                    )
+                ]
+            elif isinstance(h, Line2D):
+                x = [x0 + size * xi for xi in h.get_xdata()]
+                y = [y0 + size * yi for yi in h.get_ydata()]
+                a += [Line2D(x, y, color=h.get_color(), transform=trans)]
+        return a

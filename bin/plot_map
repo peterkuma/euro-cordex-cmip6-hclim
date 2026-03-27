@@ -4,7 +4,7 @@ Usage: plot_map TYPE INPUT SOURCE... OUTPUT
 
 Arguments:
 
-  TYPE    Plot type. One of: "mean" or "trend".
+  TYPE    Plot type. One of: "mean" (period mean), "trend" (period linear trend), or "diff" (period difference).
   INPUT   Input directory with period-season statistics produced by calc_stats (NetCDF).
   SOURCE  Source name.
   OUTPUT  Output directory (PDF).
@@ -18,6 +18,7 @@ import os
 import sys
 import warnings
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from copy import copy
 
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
@@ -31,6 +32,8 @@ import numpy as np
 import scipy as sp
 from lib import io, misc
 from matplotlib.gridspec import GridSpec
+from matplotlib.lines import Line2D
+from matplotlib.patches import Rectangle
 from pyproj import CRS
 from pyproj.transformer import transform
 
@@ -43,10 +46,10 @@ mpl.rc("lines", linewidth=1.2)
 mpl.rc("xtick.major", width=0.3)
 mpl.rc("ytick.major", width=0.3)
 mpl.rc("legend", framealpha=1)
-mpl.rc("legend", facecolor="#eeeeee")
+mpl.rc("legend", facecolor="none")
 mpl.rc("legend", edgecolor="none")
 mpl.rc("legend", fancybox=False)
-mpl.rc("legend", fontsize=7)
+mpl.rc("legend", fontsize=9)
 mpl.rc("grid", color="k")
 mpl.rc("grid", alpha=0.2)
 mpl.rc("grid", lw=0.1)
@@ -60,10 +63,10 @@ NCOLS = 4
 
 VARS = [
     "pr",
-    "psl",
+    # "psl",
     "tas",
-    "tasmax",
-    "tasmin",
+    # "tasmax",
+    # "tasmin",
 ]
 
 SEASONS = [
@@ -75,12 +78,17 @@ SEASONS = [
 ]
 
 PERIODS = [
-    [1981, 2020],
+    # [1981, 2020],
     [1991, 2020],
-    [1995, 2014],
-    [2021, 2040],
-    [2041, 2060],
-    [2081, 2100],
+    # [1995, 2014],
+    # [2021, 2040],
+    # [2041, 2060],
+    # [2081, 2100],
+]
+
+PERIOD_PAIRS = [
+    [[1991, 2020], [2071, 2100]],
+    # [[1995, 2014], [2081, 2100]],
 ]
 
 FIG_WIDTH = 7.3  # in
@@ -96,14 +104,19 @@ LCC_PROJECTION = {
     "standard_parallels": [49.5],
 }
 
-COLORS = ["#71f4ff", "#DDDDDD"]
+COLOR_NOENS = "#DDDDDD"
+COLOR_ENS = "#71f4ff"
 
 
 def get_vlim(x, sym=False, percentile=2, mask=None):
     if isinstance(x, np.ma.MaskedArray):
         x = x.filled(np.nan)
     if mask is not None:
-        x[~mask] = np.nan
+        x = x.copy()
+        if mask.ndim == 2:
+            x[~mask] = np.nan
+        else:
+            x[:, ~mask] = np.nan
     low = np.nanpercentile(x, percentile)
     high = np.nanpercentile(x, 100 - percentile)
     if sym:
@@ -113,11 +126,11 @@ def get_vlim(x, sym=False, percentile=2, mask=None):
         return [low, high]
 
 
-def get_cmap(var, divergent, vlim):
+def get_bounds_cmap(var, relative, vlim):
     locator = mpl.ticker.MaxNLocator(nbins=16, steps=[1, 2, 2.5, 5, 10])
     bounds = locator.tick_values(vlim[0], vlim[1])
     n = len(bounds) - 1
-    if divergent:
+    if relative:
         cmap = plt.get_cmap("Spectral_r", n).copy()
         cmap.set_over("#600027")
         cmap.set_under("#322a56")
@@ -127,39 +140,25 @@ def get_cmap(var, divergent, vlim):
         cmap.set_under("#44008c")
     if var == "pr":
         cmap = cmap.reversed()
-    return cmap, bounds
+    return bounds, cmap
 
 
-def determine_bounds_cmaps(dd, d_ref, var, name, divergent):
-    vlim1 = [np.inf, -np.inf]
-    vlim2 = [np.inf, -np.inf]
+def get_group_bounds_cmap(dd, type_, var, relative):
+    vlim = [np.inf, -np.inf]
     for d in dd:
-        units = ds.attr(d, "units", var=name)
         mask = d["lat"] >= VLIM_CUTOFF_LAT
-        if d_ref is None or d == d_ref:
-            z = d[name]
-            z, _ = misc.convert_pretty_units(z, units)
-            vlim = get_vlim(z, d_ref == None, mask=mask)
-            vlim1 = [min(vlim1[0], vlim[0]), max(vlim1[1], vlim[1])]
+        if relative:
+            p = 15 if var == "pr" or type_ == "diff" else 2
+            vlim1 = get_vlim(d["z"], True, p, mask=mask)
+            y = max(vlim[1], vlim1[1])
+            vlim = [-y, y]
         else:
-            if var == "pr":
-                # z = (d[name] - d_ref[name]) / d_ref[name] * 100
-                with warnings.catch_warnings():
-                    warnings.simplefilter("ignore", category=RuntimeWarning)
-                    z = np.log(d[name] / d_ref[name])
-                vlim = get_vlim(z, True, 15, mask=mask)
-            else:
-                z = d[name] - d_ref[name]
-                z, _ = misc.convert_pretty_units(z, units)
-                vlim = get_vlim(z, True, mask=mask)
-            y = max(vlim2[1], vlim[1])
-            vlim2 = [-y, y]
-    cmap1, bounds1 = get_cmap(var, divergent, vlim1)
-    cmap2, bounds2 = get_cmap(var, True, vlim2)
-    return bounds1, bounds2, cmap1, cmap2
+            vlim1 = get_vlim(d["z"], False, mask=mask)
+            vlim = [min(vlim[0], vlim1[0]), max(vlim[1], vlim1[1])]
+    return get_bounds_cmap(var, relative, vlim)
 
 
-def get_title(d):
+def get_panel_title(d):
     title = misc.get_source_title(ds.attrs(d))
     if title == "HC/EC-Earth3-Veg":
         return title + "/" + ds.attr(d, "driving_variant_label")[:2]
@@ -167,153 +166,30 @@ def get_title(d):
         return title
 
 
-def plot_panel(
-    fig,
-    gs,
-    d,
-    d_ref,
-    var,
-    name,
-    name_p,
-    name_ts,
-    season,
-    xaxis=True,
-    yaxis=True,
-    colorbar=False,
-    colorbar_fit=False,
-    bounds1=None,
-    bounds2=None,
-    cmap1=None,
-    cmap2=None,
-    in_ensemble=False,
-):
-    figsize = fig.get_size_inches()
-    attrs = ds.attrs(d, name)
-    label = misc.get_pretty_var_label(attrs["long_name"])
-    title = get_title(d)
-    pvalue = None
+def init_crs(crs):
+    return ccrs.LambertConformal(
+        central_longitude=crs["longitude_of_central_meridian"],
+        central_latitude=crs["latitude_of_projection_origin"],
+        false_easting=crs["false_easting"],
+        false_northing=crs["false_northing"],
+        standard_parallels=(crs["standard_parallel"],),
+    )
 
-    if "crs" in ds.vars(d):
-        crs = ccrs.LambertConformal(
-            central_longitude=d["."]["crs"]["longitude_of_central_meridian"],
-            central_latitude=d["."]["crs"]["latitude_of_projection_origin"],
-            false_easting=d["."]["crs"]["false_easting"],
-            false_northing=d["."]["crs"]["false_northing"],
-            standard_parallels=(d["."]["crs"]["standard_parallel"],),
-        )
+
+def init_map(gs, crs_attrs, xaxis=True, yaxis=True):
+    if crs_attrs != {}:
+        crs = init_crs(crs_attrs)
         data_crs = crs
     else:
         crs = ccrs.LambertConformal(**LCC_PROJECTION)
         data_crs = ccrs.PlateCarree()
-    ax = fig.add_subplot(gs, projection=crs)
+
+    ax = plt.gcf().add_subplot(gs, projection=crs)
+    ax.set_extent([-10, 30, 33, 75], crs=ccrs.PlateCarree())
     ax.coastlines("50m", linewidth=0.4, alpha=0.9)
     ax.add_feature(
         cfeature.BORDERS, linewidth=0.3, edgecolor="black", alpha=0.8
     )
-
-    if d_ref is None:
-        z = d[name]
-        z, units = misc.convert_pretty_units(z, attrs["units"])
-        if colorbar_fit:
-            cb_loc = [0.335, 2 / figsize[1], 0.56, 0.1 / figsize[1]]
-        else:
-            cb_loc = [0.125, 0.34 / figsize[1], 0.35, 0.1 / figsize[1]]
-        bounds = bounds1
-        cmap = cmap1
-    else:
-        if var == "pr":
-            z = (d[name] - d_ref[name]) / d_ref[name] * 100
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore", category=RuntimeWarning)
-                z = np.log(d[name] / d_ref[name])
-            units = "%"
-        else:
-            z = d[name] - d_ref[name]
-            z, units = misc.convert_pretty_units(z, attrs["units"])
-        if colorbar_fit:
-            cb_loc = [0.335, 1.15 / figsize[1], 0.56, 0.1 / figsize[1]]
-        else:
-            cb_loc = [0.545, 0.34 / figsize[1], 0.35, 0.1 / figsize[1]]
-        label = "Anomaly from %s" % misc.get_source_title(ds.attrs(d_ref))
-        bounds = bounds2
-        cmap = cmap2
-
-    units_pretty = misc.get_pretty_units(units)
-
-    if name_p in d:
-        pvalue = d[name_p]
-
-    if "x" in d and "y" in d:
-        source_coordinates = "xy"
-        x = d["x"]
-        y = d["y"]
-        data_extent = [x[0], x[-1], y[0], y[-1]]
-    else:
-        source_coordinates = "lonlat"
-        lon = d["lon"]
-        lat = d["lat"]
-        order = np.argsort(lon)
-        lon = lon[order]
-        dlon = lon[1] - lon[0]
-        dlat = lat[1] - lat[0]
-        z = z[order, :]
-        data_extent = [
-            lon[0] - dlon,
-            lon[-1] + dlon,
-            lat[0] - dlat,
-            lat[-1] + dlat,
-        ]
-        z = z.T
-        z, _ = cartopy.util.add_cyclic_point(z, coord=lon)
-
-    im = plt.imshow(
-        z,
-        extent=data_extent,
-        origin="lower",
-        cmap=cmap,
-        vmin=bounds[0],
-        vmax=bounds[-1],
-        interpolation="none",
-        transform=data_crs,
-    )
-
-    ax.set_extent([-10, 30, 33, 75], crs=ccrs.PlateCarree())
-
-    if pvalue is not None:
-        if source_coordinates == "lonlat":
-            xmin, xmax, ymin, ymax = plt.gca().get_extent()
-            x = np.arange(xmin, xmax + 100000, 100000)
-            y = np.arange(ymin, ymax + 100000, 100000)
-            xg, yg = np.meshgrid(x, y)
-            xg = xg.flatten()
-            yg = yg.flatten()
-            lonlat = ccrs.PlateCarree().transform_points(crs, xg, yg)
-            long = lonlat[:, 0] % 360
-            latg = lonlat[:, 1]
-            ii = np.searchsorted(lon, long)
-            jj = np.searchsorted(lat, latg)
-            ii[ii >= len(lon)] = len(lon) - 1
-            jj[jj >= len(lat)] = len(lat) - 1
-            pv = pvalue[ii, jj]
-        else:
-            x2 = np.arange(np.min(x), np.max(x) + 100000, 100000)
-            y2 = np.arange(np.min(y), np.max(y) + 100000, 100000)
-            xg, yg = np.meshgrid(x2, y2)
-            ii = np.searchsorted(x, x2)
-            jj = np.searchsorted(y, y2)
-            ii[ii >= len(x)] = len(x) - 1
-            jj[jj >= len(y)] = len(y) - 1
-            pv = pvalue[ii,][:, jj]
-        mask = pv >= 0.05
-        plt.scatter(
-            xg[mask],
-            yg[mask],
-            s=4,
-            lw=0.1,
-            color="k",
-            marker="x",
-            transform=crs,
-        )
 
     gl = ax.gridlines(
         draw_labels=True,
@@ -328,15 +204,144 @@ def plot_panel(
     gl.ylocator = mticker.FixedLocator(np.arange(-90, 90 + 5, 5))
     gl.top_labels = False
     gl.right_labels = False
-
     if not xaxis:
         gl.bottom_labels = False
     if not yaxis:
         gl.left_labels = False
-
     gl.xlabel_style = {"size": 8}
     gl.ylabel_style = {"size": 8}
 
+    return ax, crs, data_crs
+
+
+def plot_colorbar(var, bounds, cmap, label, units_pretty, relative, pos, fit):
+    figsize = plt.gcf().get_size_inches()
+    if pos == "top":
+        loc = (
+            [0.335, 2 / figsize[1], 0.56, 0.1 / figsize[1]]
+            if fit
+            else [0.125, 0.32 / figsize[1], 0.77, 0.1 / figsize[1]]
+        )
+    elif pos == "bottom":
+        loc = (
+            [0.335, 1.15 / figsize[1], 0.56, 0.1 / figsize[1]]
+            if fit
+            else [0.125, -0.28 / figsize[1], 0.77, 0.1 / figsize[1]]
+        )
+    else:
+        raise ValueError(f"invalid pos {pos!r}")
+    cax = plt.gcf().add_axes(loc)
+    extend = "max" if (var == "pr" and bounds[0] == 0) else "both"
+    if var == "psl" and not relative:
+        fmt = mpl.ticker.FuncFormatter(lambda x, pos: f"{int(x) % 100:2d}")
+        units_pretty = units_pretty + "; last two digits"
+    elif var == "pr" and relative:
+        fmt = mpl.ticker.FuncFormatter(
+            lambda x, pos: f"{100 * (np.exp(x) - 1):.0f}"
+        )
+    else:
+        fmt = mpl.ticker.FuncFormatter(
+            lambda x, pos: f"{x:.10f}".rstrip("0").rstrip(".")
+        )
+    norm = mpl.colors.BoundaryNorm(bounds, len(bounds) - 1)
+    cb = plt.gcf().colorbar(
+        mpl.cm.ScalarMappable(norm=norm, cmap=cmap),
+        cax=cax,
+        orientation="horizontal",
+        extend=extend,
+        ticks=bounds,
+        format=fmt,
+    )
+    cb_label = label
+    if units_pretty != "":
+        cb_label += " (%s)" % units_pretty
+    cb.set_label(cb_label, fontsize=9)
+    cb.ax.tick_params(labelsize=8)
+
+
+def plot_legend(fit=False):
+    noens = Rectangle((0, 0), 1, 1, facecolor=COLOR_NOENS, edgecolor="none")
+    ens = Rectangle((0, 0), 1, 1, facecolor=COLOR_ENS, edgecolor="none")
+    notrobust = (Line2D([0, 1], [1, 0], color="k"),)
+    conflicting = (
+        Line2D([0, 1], [1, 0], color="k"),
+        Line2D([0, 1], [0, 1], color="k"),
+    )
+    nonsig = (
+        Line2D([0.25, 0.75], [0.75, 0.25], color="k"),
+        Line2D([0.25, 0.75], [0.25, 0.75], color="k"),
+    )
+    handles = [
+        noens,
+        ens,
+        notrobust,
+        conflicting,
+        nonsig,
+    ]
+    labels = [
+        "Not in ensemble",
+        "Ensemble",
+        "No change or no robust signal",
+        "Conflicting signals",
+        "Non-significant anomaly",
+    ]
+    fw, fh = plt.gcf().get_size_inches()
+    bbox_to_anchor = [5 / fw, 1.8 / fh] if fit else [0.5, 0.35 / fh]
+    plt.gcf().legend(
+        handles,
+        labels,
+        handler_map={tuple: misc.SquareHandlerTuple(ndivide=None)},
+        loc="center",
+        bbox_to_anchor=bbox_to_anchor,
+        ncol=(1 if fit else 5),
+        handletextpad=0.5,
+        columnspacing=1,
+        fontsize=(9 if fit else 8),
+    )
+
+
+def plot_hatching(marker, ind, source_coordinates, lon, lat, x, y, crs):
+    if source_coordinates == "lonlat":
+        xmin, xmax, ymin, ymax = plt.gca().get_extent()
+        x = np.arange(xmin, xmax + 100000, 100000)
+        y = np.arange(ymin, ymax + 100000, 100000)
+        xg, yg = np.meshgrid(x, y)
+        xg = xg.flatten()
+        yg = yg.flatten()
+        lonlat = ccrs.PlateCarree().transform_points(crs, xg, yg)
+        long = lonlat[:, 0] % 360
+        latg = lonlat[:, 1]
+        ii = np.searchsorted(lon, long)
+        jj = np.searchsorted(lat, latg)
+        ii[ii >= len(lon)] = len(lon) - 1
+        jj[jj >= len(lat)] = len(lat) - 1
+        mask = ind[ii, jj]
+    else:
+        x2 = np.arange(np.min(x), np.max(x) + 100000, 100000)
+        y2 = np.arange(np.min(y), np.max(y) + 100000, 100000)
+        xg, yg = np.meshgrid(x2, y2)
+        ii = np.searchsorted(x, x2)
+        jj = np.searchsorted(y, y2)
+        ii[ii >= len(x)] = len(x) - 1
+        jj[jj >= len(y)] = len(y) - 1
+        mask = ind[ii,][:, jj]
+    mpl_marker, s = {
+        "x": ["x", 4],
+        "X": ["x", 7],
+        "\\": [[(-0.5, 0.5), (0.5, -0.5)], 7],
+    }[marker]
+    plt.scatter(
+        xg[mask],
+        yg[mask],
+        s=s,
+        lw=0.1,
+        color="k",
+        marker=mpl_marker,
+        transform=crs,
+    )
+
+
+def plot_panel_title(title, in_ensemble=False):
     plt.text(
         0.015,
         0.93,
@@ -344,7 +349,7 @@ def plot_panel(
         transform=plt.gca().transAxes,
         bbox=dict(
             facecolor=(
-                COLORS[0] if in_ensemble or title == "ENS" else COLORS[1]
+                COLOR_ENS if in_ensemble or title == "ENS" else COLOR_NOENS
             ),
             edgecolor="none",
             boxstyle="square,pad=0.1",
@@ -354,38 +359,116 @@ def plot_panel(
         fontweight=("bold" if title == "ENS" else "normal"),
     )
 
-    if colorbar:
-        cax = fig.add_axes(cb_loc)
-        extend = "max" if (var == "pr" and bounds[0] == 0) else "both"
-        if var == "psl" and d_ref is None:
-            fmt = mpl.ticker.FuncFormatter(lambda x, pos: f"{int(x) % 100:2d}")
-            units_pretty = units_pretty + "; last two digits"
-        elif var == "pr" and d_ref is not None:
-            fmt = mpl.ticker.FuncFormatter(
-                lambda x, pos: f"{100 * (np.exp(x) - 1):.0f}"
-            )
-        else:
-            fmt = mpl.ticker.FuncFormatter(
-                lambda x, pos: f"{x:.10f}".rstrip("0").rstrip(".")
-            )
-        cb = fig.colorbar(
-            im,
-            cax=cax,
-            orientation="horizontal",
-            extend=extend,
-            ticks=bounds,
-            format=fmt,
+
+def plot_panel_data(z, extent, cmap, bounds, data_crs):
+    im = plt.imshow(
+        z,
+        extent=extent,
+        origin="lower",
+        cmap=cmap,
+        vmin=bounds[0],
+        vmax=bounds[-1],
+        interpolation="none",
+        transform=data_crs,
+    )
+
+
+def plot_panel(
+    gs,
+    d,
+    name,
+    xaxis=True,
+    yaxis=True,
+    bounds=None,
+    cmap=None,
+    in_ensemble=False,
+    title_period=False,
+):
+    figsize = plt.gcf().get_size_inches()
+    attrs = ds.attrs(d, name)
+    title = get_panel_title(d)
+    if title_period:
+        title += " " + ds.attr(d, "period").replace("-", "–")
+    ax, crs, data_crs = init_map(gs, ds.attrs(d, "crs"), xaxis, yaxis)
+
+    if "x" in d and "y" in d:
+        source_coordinates = "xy"
+        x = d["x"]
+        y = d["y"]
+        z = d["z"]
+        lon = None
+        lat = None
+        extent = [x[0], x[-1], y[0], y[-1]]
+    else:
+        source_coordinates = "lonlat"
+        lon = d["lon"]
+        lat = d["lat"]
+        x = None
+        y = None
+        order = np.argsort(lon)
+        z = d["z"][order, :]
+        lon = lon[order]
+        dlon = lon[1] - lon[0]
+        dlat = lat[1] - lat[0]
+        extent = [
+            lon[0] - dlon,
+            lon[-1] + dlon,
+            lat[0] - dlat,
+            lat[-1] + dlat,
+        ]
+        z = z.T
+        z, _ = cartopy.util.add_cyclic_point(z, coord=lon)
+
+    plot_panel_data(z, extent, cmap, bounds, data_crs)
+    if name + "_p" in d:
+        plot_hatching(
+            "x",
+            d[name + "_p"] >= 0.05,
+            source_coordinates,
+            lon,
+            lat,
+            x,
+            y,
+            crs,
         )
-        cb_label = label
-        if units_pretty != "":
-            cb_label += " (%s)" % units_pretty
-        cb.set_label(cb_label)
-        cb.ax.tick_params(labelsize=8)
+    if "robust_sign" in d and "robust_variability" in d:
+        plot_hatching(
+            "\\",
+            ~d["robust_variability"],
+            source_coordinates,
+            lon,
+            lat,
+            x,
+            y,
+            crs,
+        )
+        plot_hatching(
+            "X",
+            d["robust_variability"] & ~d["robust_sign"],
+            source_coordinates,
+            lon,
+            lat,
+            x,
+            y,
+            crs,
+        )
+    plot_panel_title(title, in_ensemble)
 
 
-def read(input_, sources, var, name, name_p, name_ts, season, period, index):
+def read(input_, sources, var, name, season, period, index):
     dd = []
-    vars = [name, name_p, name_ts, "x", "y", "lon", "lat", "crs"]
+    vars = [
+        name,
+        name + "_p",
+        name + "_ts",
+        var + "_trend",
+        "year",
+        "x",
+        "y",
+        "lon",
+        "lat",
+        "crs",
+    ]
     for i, source in enumerate(sources):
         dd1 = io.read_dataset(
             input_,
@@ -427,65 +510,138 @@ def get_figsize(nrows, ncols):
     return [w, h]
 
 
-def calc_pvalue(d, d_ref, name, name_p, name_ts):
-    if d is d_ref:
-        return
+def calc_pvalue(d, d_ref, name, paired=True):
     mask = ~d_ref[name].mask
     pvalue = np.full(d[name].shape, np.nan)
+    test = (
+        sp.stats.ttest_rel
+        if paired
+        else lambda *args, **kwargs: sp.stats.ttest_ind(
+            *args, **kwargs, equal_var=False
+        )
+    )
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", category=RuntimeWarning)
-        _, pvalue_m = sp.stats.ttest_rel(
-            d[name_ts][:, mask], d_ref[name_ts][:, mask], axis=0
+        _, pvalue_m = test(
+            d[name + "_ts"][:, mask], d_ref[name + "_ts"][:, mask], axis=0
         )
     pvalue[mask] = pvalue_m
-    d[name_p] = pvalue
-    return d
+    return pvalue
 
 
-def plot(type_, input_, sources, output, var, season, period, index):
-    name = var + "_" + type_
-    name_p = name + "_p"
-    name_ts = name + "_ts"
-    dd = read(
-        input_, sources, var, name, name_p, name_ts, season, period, index
-    )
+def calc_pvalue_parallel(dd1, dd2, name, paired=True):
+    with ProcessPoolExecutor() as ex:
+        futures = []
+        for d1, d2 in zip(dd1, dd2):
+            futures += [ex.submit(calc_pvalue, d1, d2, name, paired)]
+        for future in as_completed(futures):
+            res = future.result()
+            if res is not None:
+                i = futures.index(future)
+                dd1[i][name + "_p"] = res
+
+
+def calc_detrended_sd(year, z, z_trend):
+    return np.std(z - z_trend * (year[:, None, None] - year[0]), axis=0)
+
+
+def calc_robust_signal(d_ens, dd, var, name):
+    """Calculate model signal robustness as defined in IPCC AR6 Cross-Chapter
+    Box Atlas.1 | Displaying Robustness and Uncertainty in Maps."""
+    # Sign agreement condition.
+    positive = np.array([d["z"] > 0 for d in dd])
+    positive_frac = np.mean(positive, axis=0)
+    robust_sign = (positive_frac >= 0.8) | (positive_frac < 0.2)
+
+    # Variability greater than threshold.
+    std_1yr = [
+        calc_detrended_sd(d["year"], d[f"{name}_ts"], d[f"{var}_trend"])
+        for d in dd
+    ]
+    nyears = len(d_ens["year"])
+    for d in [d_ens] + dd:
+        assert len(d["year"]) == nyears
+    gamma = [np.sqrt(2 / nyears) * 1.645 * x for x in std_1yr]
+    # for d, g in zip(dd, gamma):
+    #     source = misc.get_source_name(ds.attrs(d))
+    #     ds.write("test_%s.nc" % source, {"gamma": g})
+    greater = np.array([np.abs(d["z_raw"]) > g for d, g in zip(dd, gamma)])
+    greater_frac = np.mean(greater == 1, axis=0)
+    robust_variability = greater_frac >= 0.66
+
+    return robust_sign, robust_variability
+
+
+def get_scenario(attrs):
+    if "driving_experiment_id" in attrs:
+        s = attrs["driving_experiment_id"].split("+")[-1].upper()
+        if s.startswith("SSP"):
+            return "SSP%s-%s.%s" % (s[3], s[4], s[5])
+        return s
+
+
+def get_title(type_, var_label, season, period, scenario):
+    if type_ == "diff":
+        return "%s in %s %d–%d and %d–%d (%s) relative to %d–%d" % (
+            var_label,
+            season,
+            period[0][0],
+            period[0][1],
+            period[1][0],
+            period[1][1],
+            scenario,
+            period[0][0],
+            period[0][1],
+        )
+    else:
+        return "%s in %s %d–%d" % (
+            var_label,
+            season,
+            period[0],
+            period[1],
+        )
+
+
+def get_file_name(type_, var, season, period):
+    if type_ == "diff":
+        return "%s_%s_%d-%d_%d-%d.pdf" % (
+            var,
+            season,
+            period[0][0],
+            period[0][1],
+            period[1][0],
+            period[1][1],
+        )
+    else:
+        return "%s_%s_%d-%d.pdf" % (
+            var,
+            season,
+            period[0],
+            period[1],
+        )
+
+
+def get_ens_members(dd):
     d_ens = None
     for d in dd:
         if ds.attr(d, "source_id") == "ENS":
             d_ens = d
-    ens_members = (
-        ds.attr(d_ens, "ensemble_members") if d_ens is not None else []
-    )
+    return ds.attr(d_ens, "ensemble_members") if d_ens is not None else []
 
-    d_ref = None
-    if type_ != "trend":
-        if var == "psl":
-            try:
-                d_ref = [d for d in dd if d["."]["."]["source_id"] == "ERA5"][0]
-            except IndexError:
-                d_ref = dd[0]
-        else:
-            d_ref = dd[0]
 
-    if type_ == "mean":
-        with ProcessPoolExecutor() as ex:
-            futures = []
-            for d in dd:
-                futures += [
-                    ex.submit(calc_pvalue, d, d_ref, name, name_p, name_ts)
-                ]
-            for future in as_completed(futures):
-                d = future.result()
-                i = futures.index(future)
-                if d is not None:
-                    dd[i] = d
+def get_ref(type_, dd, var):
+    if var == "psl":
+        try:
+            return [d for d in dd if ds.attr(d, "source_id") == "ERA5"][0]
+        except IndexError:
+            return dd[0]
+    else:
+        return dd[0]
 
-    n = len(dd)
-    ncols = NCOLS
-    nrows = int(np.ceil(n / ncols))
+
+def init_figure(n, nrows, ncols):
     figsize = get_figsize(nrows, ncols)
     fig = plt.figure(figsize=figsize)
-
     gs = GridSpec(
         nrows,
         ncols,
@@ -494,55 +650,185 @@ def plot(type_, input_, sources, output, var, season, period, index):
         bottom=(BOTTOM_MARGIN / figsize[1]),
         top=(1 - TOP_MARGIN / figsize[1]),
     )
+    return fig, figsize, gs
 
-    bounds1, bounds2, cmap1, cmap2 = determine_bounds_cmaps(
-        dd, d_ref, var, name, type_ == "trend"
-    )
 
-    cb_abs = False
-    cb_rel = False
+def calc_relative(z1, z2, var, units):
+    if var == "pr":
+        z = (z1 - z2) / z2 * 100
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=RuntimeWarning)
+            z = np.log(z1 / z2)
+        units = "%"
+    else:
+        z = z1 - z2
+        z, units = misc.convert_pretty_units(z, units)
+    return z, units
+
+
+def source_intersection(dd1, dd2):
+    dict1 = {get_panel_title(d): d for d in dd1}
+    dict2 = {get_panel_title(d): d for d in dd2}
+    sources = [s for s in dict1 if s in dict2]
+    return [dict1[s] for s in sources], [dict2[s] for s in sources]
+
+
+def plot(type_, input_, sources, output, var, name, season, period, index):
+    has_absolute = False
+    has_relative = False
+    if type_ == "diff":
+        dd1 = read(input_, sources, var, name, season, period[0], index)
+        dd2 = read(input_, sources, var, name, season, period[1], index)
+        dd1, dd2 = source_intersection(dd1, dd2)
+        dd1 = [copy(dd1[0])] + dd1
+        dd2 = [copy(dd2[0])] + dd2
+        dd = dd1
+        d_ref = dd[0]
+        d_ens = dd[1]
+        for d1, d2 in zip(dd1, dd2):
+            if d1 is d_ref:
+                units = ds.attr(d1, "units", var=name)
+                d1["z"], units = misc.convert_pretty_units(d1[name], units)
+                has_absolute = True
+                units_pretty1 = misc.get_pretty_units(units)
+            else:
+                d1["z_raw"] = d2[name] - d1[name]
+                d1["z"], units = calc_relative(d2[name], d1[name], var, units)
+                has_relative = True
+                units_pretty2 = misc.get_pretty_units(units)
+            ds.attr(d1, "units", units, var="z")
+    else:
+        dd = read(input_, sources, var, name, season, period, index)
+        d_ref = get_ref(type_, dd, var)
+        for d in dd:
+            if type_ == "trend":
+                units = ds.attr(d, "units", var=name)
+                d["z"], units = misc.convert_pretty_units(d[name], units)
+                has_relative = True
+                units_pretty2 = misc.get_pretty_units(units)
+            elif d is d_ref:
+                units = ds.attr(d, "units", var=name)
+                d["z"], units = misc.convert_pretty_units(d[name], units)
+                has_absolute = True
+                units_pretty1 = misc.get_pretty_units(units)
+            else:
+                d["z"], units = calc_relative(d[name], d_ref[name], var, units)
+                has_relative = True
+                units_pretty2 = misc.get_pretty_units(units)
+            ds.attr(d, "units", units, var="z")
+
+    dd_rel = [d for d in dd if d is not d_ref]
+    if type_ == "mean":
+        calc_pvalue_parallel(dd_rel, [d_ref] * len(dd_rel), name, paired=True)
+    elif type_ == "diff":
+        calc_pvalue_parallel(dd1[2:], dd2[2:], name, paired=False)
+        d_ens["robust_sign"], d_ens["robust_variability"] = calc_robust_signal(
+            d_ens, dd_rel, var, name
+        )
+
+    ens_members = get_ens_members(dd)
+    if has_absolute:
+        bounds1, cmap1 = get_group_bounds_cmap([d_ref], type_, var, False)
+    if has_relative:
+        bounds2, cmap2 = get_group_bounds_cmap(dd_rel, type_, var, True)
+
+    n = len(dd)
+    ncols = NCOLS
+    nrows = int(np.ceil(n / ncols))
+    fig, figsize, gs = init_figure(n, nrows, ncols)
+
     for i, d in enumerate(dd):
         source = misc.get_source_name(ds.attrs(d))
         row = i // ncols
         col = i % ncols
+        relative = d is not d_ref or type_ == "trend"
+        bounds = bounds2 if relative else bounds1
+        cmap = cmap2 if relative else cmap1
         plot_panel(
-            fig,
             gs[i],
             d,
-            (d_ref if d != d_ref else None),
-            var,
             name,
-            name_p,
-            name_ts,
-            season,
             xaxis=(row == nrows - 1 and col == 0),
             yaxis=(row == nrows - 1 and col == 0),
-            colorbar=(d == d_ref and not cb_abs or d != d_ref and not cb_rel),
-            colorbar_fit=(len(dd) % ncols == 1),
-            bounds1=bounds1,
-            bounds2=bounds2,
-            cmap1=cmap1,
-            cmap2=cmap2,
+            bounds=bounds,
+            cmap=cmap,
             in_ensemble=source in ens_members,
+            title_period=(type_ == "diff" and i == 0),
         )
-        cb_abs |= d == d_ref
-        cb_rel |= d != d_ref
 
-    title = "%s %d–%d" % (
-        season,
-        period[0],
-        period[1],
+    label1 = misc.get_pretty_var_label(ds.attr(d_ref, "long_name", var=name))
+    pos1 = "top"
+    if type_ == "trend":
+        label2 = label1
+        pos2 = "top"
+    else:
+        if type_ == "diff":
+            label2 = "%d–%d relative to %d–%d" % (
+                period[1][0],
+                period[1][1],
+                period[0][0],
+                period[0][1],
+            )
+        else:
+            label2 = "Anomaly from %s" % misc.get_source_title(ds.attrs(d_ref))
+        pos2 = "bottom"
+    colorbar_fit = len(dd) % ncols == 1
+    if has_absolute:
+        plot_colorbar(
+            var,
+            bounds1,
+            cmap1,
+            label1,
+            units_pretty1,
+            False,
+            pos1,
+            colorbar_fit,
+        )
+    if has_relative:
+        plot_colorbar(
+            var, bounds2, cmap2, label2, units_pretty2, True, pos2, colorbar_fit
+        )
+
+    plot_legend(fit=(not colorbar_fit))
+
+    title = get_title(
+        type_, label1, season, period, get_scenario(ds.attrs(d_ref))
     )
-    plt.suptitle(title, y=(1 - 0.7 * TOP_MARGIN / figsize[1]))
-    file = "%s_%s_%d-%d.pdf" % (
-        var,
-        season,
-        period[0],
-        period[1],
-    )
+    file = get_file_name(type_, var, season, period)
+    plt.suptitle(title, y=(1 - 0.7 * TOP_MARGIN / figsize[1]), fontsize=10)
     filename = os.path.join(output, file)
     plt.savefig(filename, bbox_inches="tight")
     print("-> %s" % filename)
+
+
+def main(type_, input_, sources, output):
+    with ProcessPoolExecutor() as ex:
+        index = io.list_dataset(input_, ex=ex)
+        futures = []
+        for var in VARS:
+            if type_ == "trend":
+                name = f"{var}_trend"
+            else:
+                name = f"{var}_mean"
+            for season in SEASONS:
+                periods = PERIOD_PAIRS if type_ == "diff" else PERIODS
+                for period in periods:
+                    futures += [
+                        ex.submit(
+                            plot,
+                            type_,
+                            input_,
+                            sources,
+                            output,
+                            var,
+                            name,
+                            season,
+                            period,
+                            index,
+                        )
+                    ]
+        for future in as_completed(futures):
+            future.result()
 
 
 if __name__ == "__main__":
@@ -555,24 +841,7 @@ if __name__ == "__main__":
     sources = sys.argv[3:-1]
     output = sys.argv[-1]
 
-    with ProcessPoolExecutor() as ex:
-        index = io.list_dataset(input_, ex=ex)
-        futures = []
-        for var in VARS:
-            for season in SEASONS:
-                for period in PERIODS:
-                    futures += [
-                        ex.submit(
-                            plot,
-                            type_,
-                            input_,
-                            sources,
-                            output,
-                            var,
-                            season,
-                            period,
-                            index,
-                        )
-                    ]
-        for future in as_completed(futures):
-            future.result()
+    if type_ not in ["mean", "trend", "diff"]:
+        raise ValueError(f"invalid type {type_!r}")
+
+    main(type_, input_, sources, output)

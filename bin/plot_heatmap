@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Plot heatmap panel plots for all variables.
 
-Usage: bin/plot_heatmap INPUT SOURCE... OUTPUT
+Usage: bin/plot_heatmap TYPE INPUT SOURCE... OUTPUT
 
 Arguments:
 
+  TYPE    Plot type. One of: "mean" (period mean) or "diff" (period difference).
   INPUT   Input directory with period-season-region statistics produced by calc_stats (NetCDF).
   SOURCE  Source name.
   OUTPUT  Output directory (PDF).
@@ -29,6 +30,8 @@ import scipy as sp
 from lib import io, misc
 from matplotlib import pyplot as plt
 from matplotlib.gridspec import GridSpec
+from matplotlib.lines import Line2D
+from matplotlib.patches import Rectangle
 
 misc.load_mpl_fonts()
 
@@ -39,20 +42,20 @@ mpl.rc("lines", linewidth=1.2)
 mpl.rc("xtick.major", width=0.3)
 mpl.rc("ytick.major", width=0.3)
 mpl.rc("legend", framealpha=1)
-mpl.rc("legend", facecolor="#eeeeee")
+mpl.rc("legend", facecolor="none")
 mpl.rc("legend", edgecolor="none")
 mpl.rc("legend", fancybox=False)
-mpl.rc("legend", fontsize=7)
+mpl.rc("legend", fontsize=11)
 mpl.rc("grid", color="k")
 mpl.rc("grid", alpha=0.2)
 mpl.rc("grid", lw=0.1)
 
 VARS = [
     "pr",
-    "psl",
+    # "psl",
     "tas",
-    "tasmax",
-    "tasmin",
+    # "tasmax",
+    # "tasmin",
 ]
 
 SEASONS = [
@@ -64,18 +67,31 @@ SEASONS = [
 ]
 
 PERIODS = [
-    [1981, 2020],
+    # [1981, 2020],
     [1991, 2020],
-    [1995, 2014],
-    [2021, 2040],
-    [2041, 2060],
-    [2081, 2100],
+    # [1995, 2014],
+    # [2021, 2040],
+    # [2041, 2060],
+    # [2081, 2100],
 ]
 
-COLORS = ["#f5f592"]
+PERIOD_PAIRS = [
+    [[1991, 2020], [2071, 2100]],
+    # [[1995, 2014], [2081, 2100]],
+]
+
+COLOR_ENS = "#f5f592"
+
+CMAP_ABS = plt.get_cmap("viridis")
+CMAP_ABS.set_under("#ae00e3")
+CMAP_ABS.set_over("#bdaa00")
+
+CMAP_REL = cmc.vik
+CMAP_REL.set_under("#1245fc")
+CMAP_REL.set_over("#d80011")
 
 
-def get_title(d):
+def get_panel_title(d):
     title = misc.get_source_title(ds.attrs(d))
     if title == "HC/EC-Earth3-Veg":
         return title + "/" + ds.attr(d, "driving_variant_label")[:2]
@@ -105,32 +121,61 @@ def get_vlim(x, sym=False):
         return [low, high]
 
 
-def determine_vlims(values, ref):
-    vlim1 = [np.inf, -np.inf]
-    vlim2 = [np.inf, -np.inf]
-    l, n, m = values.shape
-    for i in range(n):
-        if i == ref:
-            vlim = get_vlim(values[:, i, :], False)
-            vlim1 = [min(vlim1[0], vlim[0]), max(vlim1[1], vlim[1])]
+def determine_vlims(values, rel=False):
+    vlim = [np.inf, -np.inf]
+    for i in range(values.shape[1]):
+        if rel:
+            vlim1 = get_vlim(values[:, i, :], True)
+            y = max(vlim[1], vlim1[1])
+            vlim = [-y, y]
         else:
-            vlim = get_vlim(values[:, i, :] - values[:, ref, :], True)
-            y = max(vlim2[1], vlim[1])
-            vlim2 = [-y, y]
-    return vlim1, vlim2
+            vlim1 = get_vlim(values[:, i, :], False)
+            vlim = [min(vlim[0], vlim1[0]), max(vlim[1], vlim1[1])]
+    return vlim
 
 
-def calc_pvalue(values_ts, ref):  # d, d_ref, name, name_p, name_ts):
-    pvalue = np.full(values_ts.shape[:-1], np.nan)
+def calc_pvalue(x1, x2, paired=True):
+    test = (
+        sp.stats.ttest_rel
+        if paired
+        else lambda *args, **kwargs: sp.stats.ttest_ind(
+            *args, **kwargs, equal_var=False
+        )
+    )
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", category=RuntimeWarning)
-        for i in range(values_ts.shape[1]):
-            if i == ref:
-                continue
-            _, pvalue[:, i, :] = sp.stats.ttest_rel(
-                values_ts[:, i, :, :], values_ts[:, ref, :, :], axis=2
-            )
-    return pvalue
+        _, pvalue = test(x1, x2, axis=2)
+        return pvalue
+
+
+def calc_trend(y, x):
+    res = sp.stats.linregress(y, x, axis=3)
+    return res.slope
+
+
+def calc_detrended_sd(y, x):
+    trend = calc_trend(y, x)
+    return np.std(x - trend[:, :, :, None] * (y - y[0]), axis=3)
+
+
+def calc_robust_signal(y1, y2, x1, x2, xrel):
+    """Calculate model signal robustness as defined in IPCC AR6 Cross-Chapter
+    Box Atlas.1 | Displaying Robustness and Uncertainty in Maps."""
+    # Sign agreement condition.
+    positive = xrel > 0
+    positive_frac = np.mean(positive, axis=1)
+    robust_sign = (positive_frac >= 0.8) | (positive_frac < 0.2)
+
+    # Variability greater than threshold.
+    assert len(y1) == len(y2)
+    nyears = len(y1)
+    std_1yr = calc_detrended_sd(y1, x1)
+    gamma = np.sqrt(2 / nyears) * 1.645 * std_1yr
+    greater = np.abs(xrel) > gamma
+    greater_frac = np.mean(greater == 1, axis=1)
+    robust_variability = greater_frac >= 0.66
+
+    return robust_sign, robust_variability
 
 
 def get_text_color(value, cmap, norm):
@@ -139,128 +184,166 @@ def get_text_color(value, cmap, norm):
     return "k" if lightness > 0.5 else "w"
 
 
+def plot_values(values, vlim, cmap, aspect):
+    return plt.imshow(
+        values,
+        cmap=cmap,
+        vmin=vlim[0],
+        vmax=vlim[1],
+        aspect=aspect,
+    )
+
+
+def plot_hatching(marker, ind, values, cmap, norm):
+    if marker == "x":
+        s = 0.25
+    elif marker in ["X", "\\"]:
+        s = 0.5
+    else:
+        raise ValueError(f"invalid marker {marker!r}")
+    a = dict(linewidth=0.3, alpha=0.6)
+    n, m = values.shape
+    for i in range(n):
+        for j in range(m):
+            if ind[i, j]:
+                color = get_text_color(values[i, j], cmap, norm)
+                if marker in ["x", "X"]:
+                    plt.plot([j - s, j + s], [i - s, i + s], color=color, **a)
+                    plt.plot([j + s, j - s], [i - s, i + s], color=color, **a)
+                else:  # \
+                    plt.plot([j - s, j + s], [i - s, i + s], color=color, **a)
+
+
+def plot_values_text(values, format_, cmap, norm):
+    n, m = values.shape
+    for i in range(n):
+        for j in range(m):
+            if np.isnan(values[i, j]):
+                continue
+            plt.text(
+                j,
+                i,
+                format_ % values[i, j],
+                color=get_text_color(values[i, j], cmap, norm),
+                fontsize=9,
+                ha="center",
+                va="center",
+            )
+
+
+def plot_labels(labels, mask_ens):
+    tick_labels = ["%d. %s" % (i + 1, s) for i, s in enumerate(labels)]
+    plt.yticks(np.arange(len(labels)), tick_labels)
+    for i, tick_label in enumerate(plt.gca().get_yticklabels()):
+        if mask_ens[i] or labels[i] == "ENS":
+            tick_label.set_bbox(dict(facecolor=COLOR_ENS, edgecolor="none"))
+        if labels[i] == "ENS":
+            tick_label.set_fontweight("bold")
+
+
+def plot_colorbar(ax, var, vlim, cmap, label, rel):
+    fw, fh = plt.gcf().get_size_inches()
+    bbox = ax.get_window_extent().transformed(
+        plt.gcf().dpi_scale_trans.inverted()
+    )
+    aw, ah = bbox.width, bbox.height
+    if rel:
+        cb_loc = [(aw - 2.1) / fw, 0 / fh, 0.15 / fw, ah / fh]
+        extend = "both"
+    else:
+        cb_loc = [(aw - 3) / fw, 0 / fh, 0.15 / fw, ah / fh]
+        extend = "max" if (var == "pr" and vlim[0] == 0) else "both"
+    cax = plt.gcf().add_axes(cb_loc)
+    norm = mpl.colors.Normalize(vmin=vlim[0], vmax=vlim[1])
+    sm = mpl.cm.ScalarMappable(norm=norm, cmap=cmap)
+    cb = plt.gcf().colorbar(sm, cax=cax, extend="both")
+    cb.set_label(label)
+
+
+def plot_legend():
+    ens = Rectangle((0, 0), 1, 1, facecolor=COLOR_ENS, edgecolor="none")
+    notrobust = (Line2D([0, 1], [1, 0], color="k"),)
+    conflicting = (
+        Line2D([0, 1], [1, 0], color="k"),
+        Line2D([0, 1], [0, 1], color="k"),
+    )
+    nonsig = (
+        Line2D([0.25, 0.75], [0.75, 0.25], color="k"),
+        Line2D([0.25, 0.75], [0.25, 0.75], color="k"),
+    )
+    handles = [
+        ens,
+        notrobust,
+        conflicting,
+        nonsig,
+    ]
+    labels = [
+        "Ensemble",
+        "No change or no robust signal",
+        "Conflicting signals",
+        "Non-significant anomaly",
+    ]
+    fw, fh = plt.gcf().get_size_inches()
+    plt.gcf().legend(
+        handles,
+        labels,
+        handler_map={tuple: misc.SquareHandlerTuple(ndivide=None)},
+        loc="center",
+        bbox_to_anchor=[0.5, -0.55 / fh],
+        ncol=4,
+    )
+
+
 def plot_panel(
     values,
     pvalue,
+    robust_sign,
+    robust_variability,
     labels,
-    ensemble_mask,
+    mask_ens,
     regions,
     season,
     var,
     long_name,
     units,
     ref=0,
-    plot_labels=False,
-    plot_colorbar=False,
+    with_labels=False,
     vlim_abs=None,
     vlim_rel=None,
+    cmap_abs=None,
+    cmap_rel=None,
     aspect=1,
-    format="%.1f",
+    format_="%.1f",
 ):
     n, m = values.shape
     ii = np.arange(n)
     jj = np.arange(m)
-
-    values_combined = values.copy()
-
     values_abs = values.copy()
-    mask = ii == ref
-    values_abs[~mask] = np.nan
-    cmap_abs = plt.get_cmap("viridis").copy()
-    cmap_abs.set_over("#bdaa00")
-    cmap_abs.set_under("#ae00e3")
-    im_abs = plt.imshow(
-        values_abs,
-        cmap=cmap_abs,
-        vmin=vlim_abs[0],
-        vmax=vlim_abs[1],
-        aspect=aspect,
-    )
-
+    values_abs[ii != ref] = np.nan
     values_rel = values.copy()
-    mask = ii != ref
-    for j in jj:
-        values_rel[:, j] -= values[ref, j]
-        values_combined[:, j] -= values[ref, j]
-    values_combined[ref] = values[ref]
-    values_rel[~mask] = np.nan
-    cmap_rel = cmc.vik.copy()
-    cmap_rel.set_over("#d80011")
-    cmap_rel.set_under("#1245fc")
-    if var == "pr":
-        cmap_rel = cmap_rel.reversed()
-    im_rel = plt.imshow(
-        values_rel,
-        cmap=cmap_rel,
-        vmin=vlim_rel[0],
-        vmax=vlim_rel[1],
-        aspect=aspect,
+    values_rel[ii == ref] = np.nan
+    im_abs = plot_values(values_abs, vlim_abs, cmap_abs, aspect)
+    im_rel = plot_values(values_rel, vlim_rel, cmap_rel, aspect)
+    plot_hatching("x", pvalue >= 0.05, values, im_rel.cmap, im_rel.norm)
+    plot_hatching("\\", ~robust_variability, values, im_rel.cmap, im_rel.norm)
+    plot_hatching(
+        "X",
+        robust_variability & ~robust_sign,
+        values,
+        im_rel.cmap,
+        im_rel.norm,
     )
-
-    # Plot pvalue.
-    s = 0.5
-    a = dict(linewidth=0.3, alpha=0.4)
-    for i in range(n):
-        for j in range(m):
-            if pvalue[i, j] >= 0.05:
-                im = im_abs if i == ref else im_rel
-                color = get_text_color(values_combined[i, j], im.cmap, im.norm)
-                plt.plot([j - s, j + s], [i - s, i + s], color=color, **a)
-                plt.plot([j + s, j - s], [i - s, i + s], color=color, **a)
-
+    plot_values_text(values_abs, format_, cmap_abs, im_abs.norm)
+    plot_values_text(values_rel, format_, cmap_rel, im_rel.norm)
     plt.yticks(ii, np.arange(1, n + 1))
     plt.xticks(jj, regions)
-    for i in range(n):
-        for j in range(m):
-            value = values_combined[i, j]
-            im = im_abs if i == ref else im_rel
-            color = get_text_color(value, im.cmap, im.norm)
-            plt.text(
-                j,
-                i,
-                format % value,
-                color=color,
-                fontsize=9,
-                ha="center",
-                va="center",
-            )
-    if plot_labels:
-        tick_labels = ["%d. %s" % (i + 1, s) for i, s in enumerate(labels)]
-        plt.yticks(ii, tick_labels)
-        for i, tick_label in enumerate(plt.gca().get_yticklabels()):
-            if ensemble_mask[i] or labels[i] == "ENS":
-                tick_label.set_bbox(dict(facecolor=COLORS[0], edgecolor="none"))
-            if labels[i] == "ENS":
-                tick_label.set_fontweight("bold")
-
+    if with_labels:
+        plot_labels(labels, mask_ens)
     plt.title(season)
 
-    var_label = misc.get_pretty_var_label(long_name)
-    units_pretty = misc.get_pretty_units(units)
 
-    fw, fh = plt.gcf().get_size_inches()
-    bbox = (
-        plt.gca()
-        .get_window_extent()
-        .transformed(plt.gcf().dpi_scale_trans.inverted())
-    )
-    aw, ah = bbox.width, bbox.height
-
-    if plot_colorbar:
-        cb_loc = [(aw - 3) / fw, 0 / fh, 0.15 / fw, ah / fh]
-        cax = plt.gcf().add_axes(cb_loc)
-        extend = "max" if (var == "pr" and vlim_abs[0] == 0) else "both"
-        cb = plt.gcf().colorbar(im_abs, cax=cax, extend=extend)
-        cb.set_label("%s (%s)" % (var_label, units_pretty))
-
-        cb_loc = [(aw - 2.1) / fw, 0 / fh, 0.15 / fw, ah / fh]
-        cax = plt.gcf().add_axes(cb_loc)
-        cb = plt.gcf().colorbar(im_rel, cax=cax, extend="both")
-        cb.set_label("Anomaly from %s (%s)" % (labels[ref], units_pretty))
-
-
-def read(index, source, var, season, region, period):
-    vars = [var + "_mean", var + "_mean_ts"]
+def read(input_, index, source, var, season, region, period):
+    vars = [var + "_mean", var + "_mean_ts", "year"]
     dd = io.read_dataset(
         input_,
         {
@@ -298,6 +381,7 @@ def is_gcm(attrs):
         "OBS",
         "REAN",
         "ERA5",
+        "ENS",
     ]
 
 
@@ -329,82 +413,28 @@ def get_ensemble_position(attrs_array):
     return i
 
 
-def get_ref(var, labels):
-    if var == "psl":
-        search = ["ERA5", "ENS"]
+def get_ref(type_, var, labels):
+    if type_ == "diff":
+        return 0
     else:
-        search = ["OBS", "ENS"]
-    for what in search:
-        try:
-            i = labels.index(what)
-            return i
-        except ValueError:
-            pass
+        if var == "psl":
+            search = ["ERA5", "ENS"]
+        else:
+            search = ["OBS", "ENS"]
+        for what in search:
+            try:
+                i = labels.index(what)
+                return i
+            except ValueError:
+                pass
     return 0
 
 
-def plot(input_, index, output, var, sources, period):
-    regions = list(misc.REGIONS.keys())
-    nseasons = len(SEASONS)
-    nsources = len(sources) + 1
-    ens_i = nsources - 1  # Ensemble mean at the end.
-    nregions = len(misc.REGIONS)
-    nyears = period[1] - period[0] + 1
-    values = np.full((nseasons, nsources, nregions), np.nan)
-    values_ts = np.full((nseasons, nsources, nregions, nyears), np.nan)
-    attrs_array = np.full(nsources, None, object)
-    labels = np.full(nsources, None, object)
-    mask = np.full(nsources, False, bool)
-    ens_mask = np.full(nsources, False, bool)
-    long_name = None
-    units = None
+def get_ens(labels):
+    return labels.index("ENS")
 
-    for k, season in enumerate(SEASONS):
-        for i, source in enumerate(sources):
-            for j, region in enumerate(regions):
-                d = read(index, source, var, season, region, period)
-                if d is None:
-                    continue
-                name = var + "_mean"
-                name_ts = var + "_mean_ts"
-                values[k, i, j] = d[name]
-                values_ts[k, i, j, :] = d[name_ts]
-                attrs_array[i] = ds.attrs(d)
-                labels[i] = get_title(d)
-                long_name = ds.attr(d, "long_name", var=name)
-                units = ds.attr(d, "units", var=name)
-                mask[i] = not (var == "pr" and labels[i] == "CERRA")
 
-    # Add ensemble mean.
-    ens_mask = get_ensemble_mask(attrs_array)
-    for k, season in enumerate(SEASONS):
-        values[k, ens_i] = calc_ensemble_mean(values[k, ens_mask])
-        values_ts[k, ens_i] = calc_ensemble_mean(values_ts[k, ens_mask])
-    labels[ens_i] = "ENS"
-    mask[ens_i] = True
-    ens_i_new = get_ensemble_position(attrs_array)
-    order = np.arange(nsources)
-    order[ens_i_new] = ens_i
-    order[(ens_i_new + 1) :] = np.arange(ens_i_new, nsources - 1)
-    values = values[:, order]
-    values_ts = values_ts[:, order]
-    labels = labels[order]
-    ens_mask = ens_mask[order]
-    attrs_array = attrs_array[order]
-
-    # Remove empty sources.
-    values = values[:, mask]
-    values_ts = values_ts[:, mask]
-    labels = labels[mask]
-    ens_mask = ens_mask[mask]
-    attrs_array = attrs_array[mask]
-    nsources = len(labels)
-
-    ref = get_ref(var, list(labels))
-    pvalue = calc_pvalue(values_ts, ref)
-    values_pretty, units_pretty = misc.convert_pretty_units(values, units)
-    vlim_abs, vlim_rel = determine_vlims(values_pretty, ref)
-
+def init_figure(var, nsources, nregions, title):
     aspect = 1.2 if var == "psl" else 1
     panel_height = nsources * 0.3
     panel_width = nregions * 0.3 * aspect
@@ -415,52 +445,275 @@ def plot(input_, index, output, var, sources, period):
     plt.figure(figsize=(fig_width, fig_height))
     plt.subplots_adjust(left=0, right=1, bottom=0, top=1)
     gs = GridSpec(2, 3, hspace=hspace / fig_height, wspace=wspace / fig_width)
-    plt.suptitle(
-        "%d–%d" % (period[0], period[1]),
-        y=((fig_height + 0.55) / fig_height),
-        fontsize=16,
-    )
+    plt.suptitle(title, y=((fig_height + 0.55) / fig_height), fontsize=16)
+    return gs
+
+
+def get_scenario(attrs):
+    s = attrs["driving_experiment_id"].split("+")[-1].upper()
+    if s.startswith("SSP"):
+        return "SSP%s-%s.%s" % (s[3], s[4], s[5])
+    return s
+
+
+def get_title(type_, var_label, scenario, period):
+    if type_ == "mean":
+        return "%s %d–%d" % (var_label, period[0], period[1])
+    else:
+        return "%s in %d–%d and %d–%d (%s) relative to %d–%d" % (
+            var_label,
+            period[0][0],
+            period[0][1],
+            period[1][0],
+            period[1][1],
+            scenario,
+            period[0][0],
+            period[0][1],
+        )
+
+
+def get_format(var):
+    return "%.0f" if var in ["pr", "psl"] else "%.1f"
+
+
+def get_aspect(var):
+    return 1 / aspect if var == "psl" else 1
+
+
+def get_output_filename(type_, output, var, period):
+    if type_ == "mean":
+        output_file = "%s_%d-%d.pdf" % (var, period[0], period[1])
+    else:
+        output_file = "%s_%d-%d_%d-%d.pdf" % (
+            var,
+            period[0][0],
+            period[0][1],
+            period[1][0],
+            period[1][1],
+        )
+    return os.path.join(output, output_file)
+
+
+def plot(type_, input_, index, output, var, sources, period):
+    if type_ == "diff":
+        sources = sources[0:1] + sources[0:1] + sources[1:]
+    regions = list(misc.REGIONS.keys())
+    nseasons = len(SEASONS)
+    nsources = len(sources)
+    nregions = len(misc.REGIONS)
+    values = np.full((nseasons, nsources, nregions), np.nan)
+    pvalue = np.full((nseasons, nsources, nregions), np.nan)
+    robust_sign = np.full((nseasons, nsources, nregions), True, bool)
+    robust_variability = np.full((nseasons, nsources, nregions), True, bool)
+    if type_ == "mean":
+        years = None
+        nyears = period[1] - period[0] + 1
+        values_ts = np.full((nseasons, nsources, nregions, nyears), np.nan)
+    else:
+        years1 = None
+        years2 = None
+        nyears1 = period[0][1] - period[0][0] + 1
+        nyears2 = period[1][1] - period[1][0] + 1
+        values_ts1 = np.full((nseasons, nsources, nregions, nyears1), np.nan)
+        values_ts2 = np.full((nseasons, nsources, nregions, nyears2), np.nan)
+    attrs_array = np.full(nsources, None, object)
+    labels = np.full(nsources, None, object)
+    mask = np.full(nsources, False, bool)
+    long_name = None
+    units = None
+    name = f"{var}_mean"
+
     for k, season in enumerate(SEASONS):
-        plt.subplot(gs[k if k < 3 else k + 1])
+        for i, source in enumerate(sources):
+            for j, region in enumerate(regions):
+                if type_ == "mean":
+                    d = read(input_, index, source, var, season, region, period)
+                    if d is None:
+                        raise IOError(
+                            f"could not read input file for variable {var!r}, source {source!r}, season {season!r}, region {region!r}, and time period {period!r}"
+                        )
+                    values[k, i, j] = d[name]
+                    values_ts[k, i, j, :] = d[f"{name}_ts"]
+                    years = d["year"]
+                else:
+                    d1 = read(
+                        input_, index, source, var, season, region, period[0]
+                    )
+                    d2 = read(
+                        input_, index, source, var, season, region, period[1]
+                    )
+                    if d1 is None:
+                        raise IOError(
+                            f"could not read input file for variable {var!r}, source {source!r}, season {season!r}, region {region!r}, and time period {period[0]!r}"
+                        )
+                    if d2 is None:
+                        raise IOError(
+                            f"could not read input file for variable {var!r}, source {source!r}, season {season!r}, region {region!r}, and time period {period[1]!r}"
+                        )
+                    years1 = d1["year"]
+                    years2 = d2["year"]
+                    d = d1
+                    values[k, i, j] = (
+                        d1[name] if i == 0 else d2[name] - d1[name]
+                    )
+                    values_ts1[k, i, j, :] = d1[f"{name}_ts"]
+                    values_ts2[k, i, j, :] = d2[f"{name}_ts"]
+                attrs_array[i] = ds.attrs(d)
+                labels[i] = get_panel_title(d)
+                if type_ == "diff" and i == 0:
+                    labels[i] += " %d–%d" % (period[0][0], period[0][1])
+                long_name = ds.attr(d, "long_name", var=name)
+                units = ds.attr(d, "units", var=name)
+
+    ref = get_ref(type_, var, list(labels))
+    ens = get_ens(list(labels))
+    mask_ens = get_ensemble_mask(attrs_array)
+
+    if type_ == "mean":
+        for i in range(nsources):
+            if i != ref:
+                values[:, i] -= values[:, ref]
+
+        for i in range(nsources):
+            if i == ref:
+                pass
+            if i == ens:
+                robust_sign[:, i], robust_variability[:, i] = (
+                    calc_robust_signal(
+                        years,
+                        years,
+                        values_ts[:, mask_ens, :, :],
+                        values_ts[:, [ref] * np.sum(mask_ens), :, :],
+                        values[:, mask_ens, :],
+                    )
+                )
+            else:
+                pvalue[:, i] = calc_pvalue(
+                    values_ts[:, i], values_ts[:, ref], paired=True
+                )
+    else:
+        for i in range(2, nsources):
+            pvalue[:, i] = calc_pvalue(
+                values_ts1[:, i], values_ts2[:, i], paired=False
+            )
+        robust_sign[:, 1], robust_variability[:, 1] = calc_robust_signal(
+            years1,
+            years2,
+            values_ts1[:, 2:],
+            values_ts2[:, 2:],
+            values[:, 2:],
+        )
+
+    values_pretty, units_pretty = misc.convert_pretty_units(values, units)
+    ii = np.arange(nsources)
+    vlim_abs = determine_vlims(values_pretty[:, ii == ref, :], False)
+    vlim_rel = determine_vlims(values_pretty[:, ii != ref, :], True)
+    cmap_abs = CMAP_ABS
+    cmap_rel = CMAP_REL.reversed() if var == "pr" else CMAP_REL
+    var_label = misc.get_pretty_var_label(long_name)
+    units_pretty = misc.get_pretty_units(units)
+    scenario = get_scenario(ds.attrs(d))
+    title = get_title(type_, var_label, scenario, period)
+    format_ = get_format(var)
+    gs = init_figure(var, nsources, nregions, title)
+    panel_aspect = get_aspect(var)
+
+    axs = [None] * nseasons
+    for k, season in enumerate(SEASONS):
+        axs[k] = plt.subplot(gs[k if k < 3 else k + 1])
         plot_panel(
             values_pretty[k],
             pvalue[k],
+            robust_sign[k],
+            robust_variability[k],
             labels,
-            ens_mask,
+            mask_ens,
             regions,
             season,
             var,
             long_name,
             units_pretty,
             ref=ref,
-            plot_labels=(k == 3),
-            plot_colorbar=(k == 0),
+            with_labels=(k == 3),
             vlim_abs=vlim_abs,
             vlim_rel=vlim_rel,
-            aspect=(1 / aspect if var == "psl" else 1),
-            format=("%.0f" if var in ["pr", "psl"] else "%.1f"),
+            cmap_abs=cmap_abs,
+            cmap_rel=cmap_rel,
+            aspect=panel_aspect,
+            format_=format_,
         )
-    output_file = "%s_%d-%d.pdf" % (var, period[0], period[1])
-    output_filename = os.path.join(output, output_file)
+
+    label_abs = "%s (%s)" % (var_label, units_pretty)
+    if type_ == "mean":
+        label_rel = "Anomaly from %s (%s)" % (labels[ref], units_pretty)
+    else:
+        label_rel = "%d–%d relative to %d–%d" % (
+            period[1][0],
+            period[1][1],
+            period[0][0],
+            period[0][1],
+        )
+
+    plot_colorbar(axs[0], var, vlim_abs, cmap_abs, label_abs, False)
+    plot_colorbar(axs[0], var, vlim_rel, cmap_rel, label_rel, True)
+
+    plot_legend()
+
+    output_filename = get_output_filename(type_, output, var, period)
     plt.savefig(output_filename, bbox_inches="tight")
     print("-> %s" % output_filename)
 
 
-if __name__ == "__main__":
-    if len(sys.argv) < 4:
-        sys.stderr.write(sys.modules[__name__].__doc__)
-        sys.exit(1)
-    input_ = sys.argv[1]
-    sources = sys.argv[2:-1]
-    output = sys.argv[-1]
+def filter_sources(sources, var):
+    return [
+        s
+        for s in sources
+        if not (
+            s == "EUR-12lcc_REAN_rean_r1i1p1f1_ECMWF_CERRA-Land_v1-r1_mon"
+            and var != "pr"
+            or s == "EUR-12lcc_REAN_rean_r1i1p1f1_ECMWF_CERRA_v1-r1_mon"
+            and var == "pr"
+        )
+    ]
 
+
+def main(type_, input_, sources, output):
     with ProcessPoolExecutor() as ex:
         index = io.list_dataset(input_, ex=ex)
         futures = []
-        for period in PERIODS:
+        periods = {
+            "mean": PERIODS,
+            "diff": PERIOD_PAIRS,
+        }[type_]
+        for period in periods:
             for var in VARS:
                 futures += [
-                    ex.submit(plot, input_, index, output, var, sources, period)
+                    ex.submit(
+                        plot,
+                        type_,
+                        input_,
+                        index,
+                        output,
+                        var,
+                        filter_sources(sources, var),
+                        period,
+                    )
                 ]
         for future in as_completed(futures):
             future.result()
+
+
+if __name__ == "__main__":
+    if len(sys.argv) < 5:
+        sys.stderr.write(sys.modules[__name__].__doc__)
+        sys.exit(1)
+
+    type_ = sys.argv[1]
+    input_ = sys.argv[2]
+    sources = sys.argv[3:-1]
+    output = sys.argv[-1]
+
+    if type_ not in ["mean", "diff"]:
+        raise ValueError(f"invalid type {type_!r}")
+
+    main(type_, input_, sources, output)
