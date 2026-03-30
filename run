@@ -155,18 +155,19 @@ calc_stats)
 
 plot_map_mean)
 	for list in "${LISTS_MEAN[@]}"; do
-		mkdir -p "plot/map/$list"
+	    out=plot/map_mean/$list
+		mkdir -p "$out"
 		cmd bin/plot_map \
 			mean \
 			"data/stats/$list/period_season" \
 			$(cat sources/list/{obs,"$list"}) \
-			"plot/map/$list"
+			"$out"
 	done
 	;;
 
 plot_map_trend)
 	for list in "${LISTS_MEAN[@]}"; do
-		out=plot/trend/$list
+		out=plot/map_trend/$list
 		mkdir -p "$out"
 		cmd bin/plot_map \
 			trend \
@@ -178,12 +179,13 @@ plot_map_trend)
 
 plot_map_diff)
 	for list in "${LISTS_DIFF[@]}"; do
-		mkdir -p "plot/diff/$list"
+	    out=plot/map_diff/$list
+		mkdir -p "$out"
 		cmd bin/plot_map \
 			diff \
 			"data/stats/$list/period_season" \
 			$(cat "sources/list/$list") \
-			"plot/diff/$list"
+			"$out"
 	done
 	;;
 
