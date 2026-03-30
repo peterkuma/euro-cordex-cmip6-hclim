@@ -545,27 +545,33 @@ def calc_detrended_sd(year, z, z_trend):
     return np.std(z - z_trend * (year[:, None, None] - year[0]), axis=0)
 
 
-def calc_robust_signal(d_ens, dd, var, name):
+def calc_robust_signal(year, mean, trend, diff):
     """Calculate model signal robustness as defined in IPCC AR6 Cross-Chapter
-    Box Atlas.1 | Displaying Robustness and Uncertainty in Maps."""
+    Box Atlas.1 | Displaying Robustness and Uncertainty in Maps.
+
+    Arguments:
+        year - years corresponding to xx1
+        mean - fields for the "modern"(reference) time period
+        trend - trend in the "modern" (reference) field
+        diff - fields for the future (deviation) as anomalies from mean
+
+    Returns:
+        robust_sign - field signifying where at least 80% of models agree on the
+                      sign of change
+        robust_variability - field signifying where at least 66% of models show
+                             greater change that the variability in the "modern"
+                             time period
+    """
     # Sign agreement condition.
-    positive = np.array([d["z"] > 0 for d in dd])
+    positive = np.array([x > 0 for x in diff])
     positive_frac = np.mean(positive, axis=0)
     robust_sign = (positive_frac >= 0.8) | (positive_frac < 0.2)
 
     # Variability greater than threshold.
-    std_1yr = [
-        calc_detrended_sd(d["year"], d[f"{name}_ts"], d[f"{var}_trend"])
-        for d in dd
-    ]
-    nyears = len(d_ens["year"])
-    for d in [d_ens] + dd:
-        assert len(d["year"]) == nyears
+    std_1yr = [calc_detrended_sd(year, x, y) for x, y in zip(mean, trend)]
+    nyears = len(year)
     gamma = [np.sqrt(2 / nyears) * 1.645 * x for x in std_1yr]
-    # for d, g in zip(dd, gamma):
-    #     source = misc.get_source_name(ds.attrs(d))
-    #     ds.write("test_%s.nc" % source, {"gamma": g})
-    greater = np.array([np.abs(d["z_raw"]) > g for d, g in zip(dd, gamma)])
+    greater = np.array([np.abs(x) > g for x, g in zip(diff, gamma)])
     greater_frac = np.mean(greater == 1, axis=0)
     robust_variability = greater_frac >= 0.66
 
@@ -639,6 +645,12 @@ def get_ref(type_, dd, var):
         return dd[0]
 
 
+def get_ens(dd):
+    for d in dd:
+        if get_panel_title(d) == "ENS":
+            return d
+
+
 def init_figure(n, nrows, ncols):
     figsize = get_figsize(nrows, ncols)
     fig = plt.figure(figsize=figsize)
@@ -700,6 +712,7 @@ def plot(type_, input_, sources, output, var, name, season, period, index):
     else:
         dd = read(input_, sources, var, name, season, period, index)
         d_ref = get_ref(type_, dd, var)
+        d_ens = get_ens(dd)
         for d in dd:
             if type_ == "trend":
                 units = ds.attr(d, "units", var=name)
@@ -713,20 +726,35 @@ def plot(type_, input_, sources, output, var, name, season, period, index):
                 units_pretty1 = misc.get_pretty_units(units)
             else:
                 d["z"], units = calc_relative(d[name], d_ref[name], var, units)
+                d["z_raw"] = d[name] - d_ref[name]
                 has_relative = True
                 units_pretty2 = misc.get_pretty_units(units)
             ds.attr(d, "units", units, var="z")
 
+    ens_members = get_ens_members(dd)
     dd_rel = [d for d in dd if d is not d_ref]
+    dd_rel_wo_ens = [d for d in dd if d is not d_ref and d is not d_ens]
+    dd_ens = [d for d in dd if misc.get_source_name(ds.attrs(d)) in ens_members]
+
     if type_ == "mean":
-        calc_pvalue_parallel(dd_rel, [d_ref] * len(dd_rel), name, paired=True)
+        calc_pvalue_parallel(
+            dd_rel_wo_ens, [d_ref] * len(dd_rel_wo_ens), name, paired=True
+        )
+        d_ens["robust_sign"], d_ens["robust_variability"] = calc_robust_signal(
+            d_ref["year"],
+            [d_ref[f"{name}_ts"]] * len(dd_ens),
+            [d_ref[f"{var}_trend"]] * len(dd_ens),
+            [d["z_raw"] for d in dd_ens],
+        )
     elif type_ == "diff":
         calc_pvalue_parallel(dd1[2:], dd2[2:], name, paired=False)
         d_ens["robust_sign"], d_ens["robust_variability"] = calc_robust_signal(
-            d_ens, dd_rel, var, name
+            d_ref["year"],
+            [d[f"{name}_ts"] for d in dd_ens],
+            [d[f"{var}_trend"] for d in dd_ens],
+            [d["z_raw"] for d in dd_ens],
         )
 
-    ens_members = get_ens_members(dd)
     if has_absolute:
         bounds1, cmap1 = get_group_bounds_cmap([d_ref], type_, var, False)
     if has_relative:
