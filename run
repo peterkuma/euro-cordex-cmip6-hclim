@@ -86,7 +86,7 @@ Tasks:
   plot_gcm_rcm_scatter  Plot GCM-RCM scatter plot for temperature and precipitation (dep: calc_stats).
   model_ranking         Calculate model ranking (dep: calc_stats).
   plot_ranking          Plot model ranking (dep: model_ranking).
-
+  plot_timeseries       Plot time series (dep: calc_stats).
 EOF
 	;;
 
@@ -137,8 +137,7 @@ ensemble)
 	;;
 
 calc_stats)
-	#for list in "${LISTS[@]}"; do
-	for list in hclim_historical+ssp126; do
+	for list in "${LISTS[@]}"; do
 		for subtype in "${SUBTYPES[@]}"; do
 			calc_stats input/sources "$list" "$subtype" data/stats/$list/$subtype
 			input=$([[ $list = gcm_historical+ssp126 ]] \
@@ -244,6 +243,17 @@ model_ranking)
 plot_ranking)
 	cmd bin/plot_ranking data/model_ranking.nc plot/model_ranking.pdf
 	;;
+
+plot_timeseries)
+    mkdir -p plot/timeseries
+    cmd bin/plot_timeseries \
+        data/stats/hclim_historical+ssp370/period_season_region \
+        $(cat sources/list/hclim_historical+ssp370) \
+        1991 2020 \
+        1991 2100 \
+        2071 2100 \
+        plot/timeseries/hclim_historical+ssp370.pdf
+    ;;
 
 *)
 	echo "$0: unknown task \"$task\"" >&2
