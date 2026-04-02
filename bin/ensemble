@@ -151,8 +151,8 @@ def process(var, input_, sources):
     ds.write(
         output_filename,
         do,
-        cf_time_units="days since 1950-01-01 00:00 UTC",
-        cf_time_calendar="standard",
+        time_units="days since 1950-01-01 00:00 UTC",
+        calendar="standard",
     )
     print("-> %s" % output_filename)
 
