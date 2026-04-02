@@ -1,0 +1,382 @@
+#!/usr/bin/env python3
+"""Plot time series of several variables.
+
+Usage: bin/plot_timeseries INPUT SOURCE... START_REF END_REF START END START_FUTURE END_FUTURE OUTPUT
+
+Arguments:
+
+  INPUT         Input directory.
+  SOURCE        Source name.
+  START_REF     Start year of the reference time period.
+  END_REF       End year of the reference time period.
+  START         Start year of the time period to plot.
+  END           End year of the time period to plot.
+  START_FUTURE  Start year of the future time period.
+  END_FUTURE    End year of the future time period.
+  OUTPUT        Output plot.
+"""
+
+import sys
+import warnings
+
+import ds_format as ds
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+import numpy as np
+from lib import io, misc
+from matplotlib.gridspec import GridSpec
+from scipy.ndimage import gaussian_filter1d
+
+misc.load_mpl_fonts()
+
+mpl.rc("font", family="Open Sans")
+mpl.rc("axes", linewidth=0.3)
+mpl.rc("axes", grid=True)
+mpl.rc("lines", linewidth=1.2)
+mpl.rc("xtick.major", width=0.3)
+mpl.rc("ytick.major", width=0.3)
+mpl.rc("legend", framealpha=1)
+mpl.rc("legend", facecolor="none")
+mpl.rc("legend", edgecolor="none")
+mpl.rc("legend", fancybox=False)
+mpl.rc("legend", fontsize=9)
+mpl.rc("grid", color="k")
+mpl.rc("grid", alpha=0.2)
+mpl.rc("grid", lw=0.1)
+mpl.rc("hatch", linewidth=0.05)
+mpl.rc("hatch", color="#000000a0")
+
+VARS = [
+    "tas",
+    "tasmin",
+    "tasmax",
+    "pr",
+    # "psl",
+]
+
+SEASONS = [
+    "ANN",
+    "DJF",
+    "MAM",
+    "JJA",
+    "SON",
+]
+
+REGIONS = [
+    "BI",
+    "FR",
+    "ME",
+    "IP",
+    "AL",
+    "MD",
+    "EA",
+    "SC",
+]
+
+COLORS = [
+    "#0700b0",
+    "#0090fd",
+    "#002715",
+    "#38ffa1",
+    "#18ffff",
+    "#ebff4b",
+    "#f18000",
+    "#b91a04",
+]
+
+MARKERS = [
+    "*",
+    ">",
+    "<",
+    "^",
+    "v",
+    "D",
+    "s",
+    "o",
+]
+
+VAR_LABEL = {
+    "tas": "T",
+    "tasmin": "$\\mathrm{T_{min}}$",
+    "tasmax": "$\\mathrm{T_{max}}$",
+    "pr": "R",
+}
+
+SIGMA = 10  # Gaussian smoothing kernel sigma for all but precipitation.
+SIGMA_PR = 15  # Gaussian smoothing kernel sigma for precipitation.
+
+FIG_WIDTH = 12  # in
+TOP_MARGIN = 0.7  # in
+BOTTOM_MARGIN = 0.7  # in
+AXIS_HEIGHT = 1.5  # in
+
+
+def read(input_, season, var, region, sources, period, index=None):
+    dd = []
+    vars = ["year", var + "_mean", var + "_mean_ts"]
+    for source in sources:
+        dd1 = io.read_dataset(
+            input_,
+            {
+                "season": season,
+                "variable_id": var,
+                "region_code": region,
+                "source": source,
+                "start_year": period[0],
+                "end_year": period[1],
+            },
+            vars,
+            False,
+            index=index,
+        )
+        if len(dd1) == 0:
+            raise IOError(
+                f"could not read input file for variable {var!r}, source {source!r}, season {season!r}, region {region!r}, and time period {start!r} to {end!r}"
+            )
+        assert len(dd1) == 1
+        dd += [dd1[0]]
+    return dd
+
+
+def calc_relative(z1, z2, var, units):
+    if var == "pr":
+        z = (z1 - z2) / z2 * 100
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=RuntimeWarning)
+            z = np.log(z1 / z2)
+        units = "%"
+    else:
+        z = z1 - z2
+        z, units = misc.convert_pretty_units(z, units)
+    return z, units
+
+
+def get_figsize(nrows, ncols):
+    w = FIG_WIDTH
+    h = nrows * AXIS_HEIGHT + BOTTOM_MARGIN + TOP_MARGIN
+    return [w, h]
+
+
+def init_figure(nrows, ncols):
+    figsize = get_figsize(nrows, ncols)
+    fig = plt.figure(figsize=figsize)
+    return GridSpec(
+        nrows,
+        ncols,
+        hspace=0.1,
+        wspace=0.21,
+        bottom=(BOTTOM_MARGIN / figsize[1]),
+        top=(1 - TOP_MARGIN / figsize[1]),
+    )
+
+
+def plot_panel(
+    dd_ref,
+    dd,
+    dd_future,
+    season,
+    var,
+    region,
+    sources,
+    period_ref,
+    period,
+    period_future,
+    color="k",
+    marker="o",
+    init=True,
+    with_xlabel=True,
+    with_xticks=True,
+    with_ylabel=True,
+    with_title=True,
+    offset=0,
+):
+    name = var + "_mean"
+    name_ts = var + "_mean_ts"
+    units = ds.attr(dd[0], "units", var=name_ts)
+    label = misc.get_pretty_var_label(ds.attr(dd[0], "long_name", var=name_ts))
+
+    x = dd[0]["year"]
+    yy = [
+        calc_relative(d[name_ts], d_ref[name], var, units)[0]
+        for d, d_ref in zip(dd, dd_ref)
+    ]
+    _, units_pretty = calc_relative(dd[0][name_ts], dd_ref[0][name], var, units)
+    sigma = SIGMA_PR if var == "pr" else SIGMA
+    yy_smooth = gaussian_filter1d(yy, sigma=sigma, axis=1)
+    ym = np.mean(yy_smooth, axis=0)
+    yl = np.percentile(yy_smooth, 0.5 * (100 - 68), axis=0)
+    yh = np.percentile(yy_smooth, 100 - 0.5 * (100 - 68), axis=0)
+    units_label = misc.get_pretty_units(units_pretty)
+    plt.plot(x, ym, color=color, label=region, linewidth=0.8)
+    line = plt.Line2D([], [], color=color, marker=marker, markersize=3)
+    plt.fill_between(x, yl, yh, color=color, alpha=0.2, edgecolor="none")
+
+    if var == "pr":
+        fmt = mpl.ticker.FuncFormatter(
+            lambda x, pos: f"{100 * (np.exp(x) - 1):.0f}"
+        )
+        plt.gca().yaxis.set_major_formatter(fmt)
+
+    plt.gca().set_xticks(np.arange(2000, 2100 + 25, 25))
+
+    ylocator = mpl.ticker.MaxNLocator(nbins=5, steps=[1, 2, 2.5, 5, 10])
+    plt.gca().yaxis.set_major_locator(ylocator)
+
+    xticks = plt.gca().get_xticks()
+    yticks = np.interp(xticks, x, ym)
+    plt.plot(xticks, yticks, marker, markersize=3, color=color)
+
+    for start, end in [period_ref, period_future]:
+        plt.fill_between(
+            [start, end],
+            0,
+            1,
+            transform=plt.gca().get_xaxis_transform(),
+            color="k",
+            alpha=0.015,
+        )
+
+    yyf = [
+        calc_relative(d[name], d_ref[name], var, units)[0]
+        for d, d_ref in zip(dd_future, dd_ref)
+    ]
+    ylf = np.percentile(yyf, 0.5 * (100 - 68))
+    yhf = np.percentile(yyf, 100 - 0.5 * (100 - 68))
+    xbar = 1.01 + offset * 0.009
+    plt.plot(
+        [xbar, xbar],
+        [ylf, yhf],
+        transform=plt.gca().get_yaxis_transform(),
+        color=color,
+        linewidth=1.1,
+        clip_on=False,
+    )
+    plt.plot(
+        xbar,
+        np.mean(yyf),
+        marker,
+        markersize=2,
+        color=color,
+        transform=plt.gca().get_yaxis_transform(),
+        clip_on=False,
+    )
+
+    if init:
+        if with_xlabel:
+            plt.xlabel("Time")
+        if not with_xticks:
+            plt.gca().set_xticklabels([])
+        if with_ylabel:
+            plt.ylabel(season)
+            plt.gca().yaxis.set_label_coords(-0.12, 0.5)
+        if with_title:
+            plt.title("%s (%s)" % (VAR_LABEL[var], units_label), fontsize=10)
+        plt.xlim(dd[0]["year"][0], dd[0]["year"][-1])
+
+    return line
+
+
+def plot_legend(lines, labels):
+    plt.legend(
+        reversed(lines),
+        reversed(labels),
+        fontsize=8,
+        loc="upper left",
+        handlelength=0.8,
+        handletextpad=0.5,
+        labelspacing=0.2,
+        borderpad=0.2,
+    )
+
+
+def main(
+    input_,
+    sources,
+    period_ref,
+    period,
+    period_future,
+    output,
+    index=None,
+):
+    index = io.list_dataset(input_)
+    nrows = len(SEASONS)
+    ncols = len(VARS)
+    gs = init_figure(nrows, ncols)
+    for i, season in enumerate(SEASONS):
+        for j, var in enumerate(VARS):
+            lines = []
+            plt.subplot(gs[i * ncols + j])
+            for k, region in enumerate(REGIONS):
+                dd_ref = read(
+                    input_,
+                    season,
+                    var,
+                    region,
+                    sources,
+                    period_ref,
+                    index=index,
+                )
+                dd = read(
+                    input_,
+                    season,
+                    var,
+                    region,
+                    sources,
+                    period,
+                    index=index,
+                )
+                dd_future = read(
+                    input_,
+                    season,
+                    var,
+                    region,
+                    sources,
+                    period_future,
+                    index=index,
+                )
+                lines += [
+                    plot_panel(
+                        dd_ref,
+                        dd,
+                        dd_future,
+                        season,
+                        var,
+                        region,
+                        sources,
+                        period_ref,
+                        period,
+                        period_future,
+                        color=COLORS[k],
+                        marker=MARKERS[k],
+                        init=(k == 0),
+                        with_xticks=(i == len(SEASONS) - 1),
+                        with_xlabel=(i == len(SEASONS) - 1 and j == 0),
+                        with_ylabel=(j == 0),
+                        with_title=(i == 0),
+                        offset=k,
+                    )
+                ]
+            # if i == 0 and j == len(VARS) - 1:
+            if i == 0 and j == 0:
+                plot_legend(lines, REGIONS)
+    plt.savefig(output, bbox_inches="tight", pad_inches=0)
+
+
+if __name__ == "__main__":
+    if len(sys.argv) < 10:
+        sys.stderr.write(sys.modules[__name__].__doc__)
+        sys.exit(1)
+    input_ = sys.argv[1]
+    sources = sys.argv[2:-7]
+    period_ref = int(sys.argv[-7]), int(sys.argv[-6])
+    period = int(sys.argv[-5]), int(sys.argv[-4])
+    period_future = int(sys.argv[-3]), int(sys.argv[-2])
+    output = sys.argv[-1]
+    main(
+        input_,
+        sources,
+        period_ref,
+        period,
+        period_future,
+        output,
+    )
