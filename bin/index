@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Create an index of metadata of a directory with model dataset files.
 
-Usage: index DIR...
+Usage: bin/index DIR...
 
 Arguments:
 
