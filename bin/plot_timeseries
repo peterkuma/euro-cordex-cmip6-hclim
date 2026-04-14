@@ -234,6 +234,7 @@ def plot_panel(
             transform=plt.gca().get_xaxis_transform(),
             color="k",
             alpha=0.015,
+            edgecolor="none",
         )
 
     yyf = [

@@ -651,7 +651,7 @@ def get_ens(dd):
             return d
 
 
-def init_figure(n, nrows, ncols):
+def init_figure(nrows, ncols):
     figsize = get_figsize(nrows, ncols)
     fig = plt.figure(figsize=figsize)
     gs = GridSpec(
