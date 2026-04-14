@@ -44,10 +44,10 @@ AUX_VARS = [
 
 VARS = [
     "pr",
-    # "psl",
+    "psl",
     "tas",
-    # "tasmax",
-    # "tasmin",
+    "tasmax",
+    "tasmin",
 ]
 
 # The season months must be continuous.
@@ -68,12 +68,13 @@ SEASON_YEAR_OFFSET = {
 }
 
 PERIODS = [
+    # [1991, 2100],
     # [1981, 2020],
     [1991, 2020],
     # [1995, 2014],
     # [2021, 2040],
     # [2041, 2060],
-    # [2071, 2100],
+    [2071, 2100],
     # [2081, 2100],
 ]
 
@@ -263,6 +264,39 @@ def calc_annual_stat(stat_type, d, do, var, period, season):
     return True
 
 
+def calc_annual_cycle(d, do, var, period):
+    mask = (d["year"] >= period[0]) & (d["year"] <= period[1])
+    d2 = {
+        var: np.ma.filled(d[var], np.nan),
+        "month": d["month"],
+        ".": {
+            var: {".dims": list(ds.dims(d, var))},
+            "month": {".dims": ["time"]},
+        },
+    }
+    ds.select(d2, {"time": mask})
+    ds.group_by(d2, "time", d2["month"], np.nanmean)
+    ds.rename_dim(d2, "time", "month")
+    name = f"{var}_ac"
+    do[name] = d2[var]
+    do["month"] = d2["month"]
+    a = ds.attrs(d, var=var)
+    ds.attrs(do, name, a)
+    dims = ds.dims(d2, var)
+    ds.dims(do, name, dims)
+    ds.meta(
+        do,
+        "month",
+        {
+            ".dims": ["month"],
+            "long_name": "month",
+        },
+    )
+    long_name = f"{a['long_name']} monthly-mean annual cycle"
+    ds.attr(do, "long_name", long_name, var=name)
+    return False
+
+
 def calc_trend_elemental(year, data):
     l, n, m = data.shape
     trend = np.full((n, m), np.nan)
@@ -404,6 +438,148 @@ def get_experiment_id(source):
         return parts[2]  # HCLIM
 
 
+def get_output_filename(output, var, source, period, season, region_code):
+    file = "%s_%s_%d-%d_%s" % (
+        var,
+        source,
+        period[0],
+        period[1],
+        season,
+    )
+    if region_code is not None:
+        file += "_" + region_code
+    file += "_stat.nc"
+    return os.path.join(output, file)
+
+
+def write(do, output, var, source, period, season, region_code):
+    output_filename = get_output_filename(
+        output, var, source, period, season, region_code
+    )
+    try:
+        os.remove(output_filename)
+    except FileNotFoundError:
+        pass
+    ds.write(
+        output_filename,
+        do,
+        time_units="days since 1950-01-01 00:00 UTC",
+        calendar="standard",
+    )
+    print("-> %s" % output_filename)
+
+
+def ignore_warnings():
+    warnings.filterwarnings(
+        "ignore", message="All-NaN slice encountered", category=RuntimeWarning
+    )
+
+    warnings.filterwarnings(
+        "ignore", message="Mean of empty slice", category=RuntimeWarning
+    )
+
+
+def read(input_, var, index=None):
+    d = io.read_dataset(
+        input_, {"variable_id": var}, AUX_VARS + [var], index=index
+    )
+    if "time" not in d:
+        return
+    date = aq.to_date(d["time"])
+    d["year"] = date[1]
+    d["month"] = date[2]
+    dims = ds.dims(d, var)
+    if dims[1:] == ["lat", "lon"]:
+        d[var] = np.transpose(d[var], (0, 2, 1))
+        dims = dims[:1] + dims[1:][::-1]
+        ds.dims(d, var, dims)
+    return d
+
+
+def set_attrs(do, period, season, var, region):
+    period_s = "%s-%s" % (period[0], period[1])
+    months_s = ", ".join([str(m) for m in SEASONS[season]])
+    ds.attr(do, "period", period_s)
+    ds.attr(do, "months", months_s)
+    ds.attr(do, "season", season)
+    ds.attr(do, "variable_id", var)
+    if region is not None:
+        region_code, region_name, lon1, lon2, lat1, lat2 = region
+        if region_code is not None:
+            ds.attr(do, "region_code", region_code)
+        if region_name is not None:
+            ds.attr(do, "region_name", region_name)
+        if lon1 is not None and lon2 is not None:
+            ds.attr(do, "region_lon_bnds", [lon1, lon2])
+        if lat1 is not None and lat2 is not None:
+            ds.attr(do, "region_lat_bnds", [lat1, lat2])
+
+
+def rm_geo_stuff(d):
+    for k in ["x", "y", "lon", "lat"]:
+        ds.rm(d, k)
+    for var in ds.vars(d):
+        for k in [
+            "cell_methods",
+            "coordinates",
+            "grid_mapping",
+        ]:
+            ds.rm_attr(d, k, var)
+
+
+def process_period_season_region(
+    d, source, period, season, var, region, geo_mean=False, weights=None
+):
+    do = {".": copy.deepcopy(META)}
+    set_attrs(do, period, season, var, region)
+
+    if not geo_mean:
+        for k in ["x", "y", "lon", "lat"]:
+            if k in do:
+                do[k] = d[k][0, :]
+
+    for k in ["crs", "height", "x", "y", "lat", "lon"]:
+        if k in d:
+            do[k] = d[k][0] if d[k] is not None else d[k]
+        ds.attrs(do, k, ds.attrs(d, k))
+        ds.dims(do, k, ds.dims(d, k)[1:])
+
+    do_write = False
+    do_write |= calc_annual_stat("mean_ts", d, do, var, period, season)
+    do_write |= calc_period_stat("mean", d, do, var, period, season)
+    if season == "ANN" and region is not None:
+        do_write |= calc_annual_cycle(d, do, var, period)
+    if not geo_mean:
+        do_write |= calc_trend(d, do, var, period, season)
+
+    if not do_write:
+        return
+
+    if geo_mean:
+        calc_geo_mean(do, var + "_mean_ts", weights)
+        calc_geo_mean(do, var + "_mean", weights)
+        calc_geo_mean(do, var + "_ac", weights)
+        rm_geo_stuff(do)
+
+    for k in ["x", "y", "lon", "lat"]:
+        copy_var_attrs(d, do, k, k)
+
+    convert_units(do)
+    copy_global_attrs(d, do)
+
+    exp_key = (
+        "driving_experiment"
+        if "driving_experiment_id" in ds.attrs(do)
+        else "experiment"
+    )
+    experiment_id = get_experiment_id(source)
+    ds.attr(do, exp_key + "_id", experiment_id)
+    if experiment_id.lower() not in ["rean", "obs"]:
+        ds.attr(do, exp_key, "combined historical and future")
+
+    return do
+
+
 def process(
     input_,
     index,
@@ -415,15 +591,9 @@ def process(
     landsea=None,
     landsea_1x1deg=None,
 ):
-    d = io.read_dataset(
-        input_, {"variable_id": var}, AUX_VARS + [var], index=index
-    )
-    if "time" not in d:
+    d = read(input_, var, index=index)
+    if d is None:
         return
-    n = len(d["time"])
-    date = aq.to_date(d["time"])
-    d["year"] = date[1]
-    d["month"] = date[2]
     dims = ds.dims(d, var)
     lon = d["lon"][0]
     lat = d["lat"][0]
@@ -433,16 +603,6 @@ def process(
         if np.any(lon >= 180):
             lon1 = lon1 % 360
             lon2 = lon2 % 360
-
-    if dims[1:] == ["lat", "lon"]:
-        d[var] = np.transpose(d[var], (0, 2, 1))
-        dims = dims[:1] + dims[1:][::-1]
-        ds.dims(d, var, dims)
-
-    dataset = d["."]["."]
-    # source = misc.get_source_name(dataset)
-    experiment_id = get_experiment_id(source)
-    freq_name = FREQUENCY[dataset["frequency"]]
 
     if geo_mean:
         bounds = [lon1, lon2, lat1, lat2]
@@ -456,118 +616,25 @@ def process(
             weights = calc_geo_weights_lonlat(lon, lat, bounds)
         weights[water > 50] = 0
 
-    warnings.filterwarnings(
-        "ignore", message="All-NaN slice encountered", category=RuntimeWarning
-    )
-
-    warnings.filterwarnings(
-        "ignore", message="Mean of empty slice", category=RuntimeWarning
-    )
+    ignore_warnings()
 
     for period in PERIODS:
         for season in SEASONS.keys():
-            period_s = "%s-%s" % (period[0], period[1])
-            months_s = ", ".join([str(m) for m in SEASONS[season]])
-
-            do = {".": copy.deepcopy(META)}
-
-            if not geo_mean:
-                for k in ["x", "y", "lon", "lat"]:
-                    if k in do:
-                        do[k] = d[k][0, :]
-
-            ds.attr(do, "period", period_s)
-            ds.attr(do, "months", months_s)
-            ds.attr(do, "season", season)
-            ds.attr(do, "variable_id", var)
-
-            if region is not None:
-                if region_code is not None:
-                    ds.attr(do, "region_code", region_code)
-                if region_name is not None:
-                    ds.attr(do, "region_name", region_name)
-                if lon1 is not None and lon2 is not None:
-                    ds.attr(do, "region_lon_bnds", [lon1, lon2])
-                if lat1 is not None and lat2 is not None:
-                    ds.attr(do, "region_lat_bnds", [lat1, lat2])
-
-            for k in ["crs", "height", "x", "y", "lat", "lon"]:
-                if k in d:
-                    do[k] = d[k][0] if d[k] is not None else d[k]
-                ds.attrs(do, k, ds.attrs(d, k))
-                ds.dims(do, k, ds.dims(d, k)[1:])
-
-            do_write = False
-            do_write |= calc_annual_stat("mean_ts", d, do, var, period, season)
-            do_write |= calc_period_stat("mean", d, do, var, period, season)
-            if not geo_mean:
-                do_write |= calc_trend(d, do, var, period, season)
-
-            if geo_mean:
-                calc_geo_mean(do, var + "_mean_ts", weights)
-                calc_geo_mean(do, var + "_mean", weights)
-                # do["weights"] = weights
-                # ds.dims(do, "weights", dims[1:])
-                # do["water"] = water
-                # ds.dims(do, "water", dims[1:])
-                for k in ["x", "y", "lon", "lat"]:
-                    ds.rm(do, k)
-                for var1 in ds.vars(do):
-                    for k in ["cell_methods", "coordinates", "grid_mapping"]:
-                        ds.rm_attr(do, k, var1)
-
-            for k in ["x", "y", "lon", "lat"]:
-                copy_var_attrs(d, do, k, k)
-
-            if not do_write:
-                continue
-
-            convert_units(do)
-            copy_global_attrs(d, do)
-
-            exp_key = (
-                "driving_experiment"
-                if "driving_experiment_id" in ds.attrs(do)
-                else "experiment"
-            )
-
-            ds.attr(do, exp_key + "_id", experiment_id)
-            if experiment_id.lower() not in ["rean", "obs"]:
-                ds.attr(do, exp_key, "combined historical and future")
-
-            file = "%s_%s_%d-%d_%s" % (
-                var,
+            do = process_period_season_region(
+                d,
                 source,
-                period[0],
-                period[1],
+                period,
                 season,
+                var,
+                region,
+                geo_mean=geo_mean,
+                weights=weights,
             )
-            if region is not None:
-                file += "_" + region_code
-            file += "_stat.nc"
-            output_filename = os.path.join(output, file)
-            try:
-                os.remove(output_filename)
-            except FileNotFoundError:
-                pass
-            ds.write(
-                output_filename,
-                do,
-                time_units="days since 1950-01-01 00:00 UTC",
-                calendar="standard",
-            )
-            print("-> %s" % output_filename)
+            if do is not None:
+                write(do, output, var, source, period, season, region_code)
 
 
-if __name__ == "__main__":
-    if len(sys.argv) != 5:
-        sys.stderr.write(sys.modules[__name__].__doc__)
-        sys.exit(1)
-    type_ = sys.argv[1]
-    input_ = sys.argv[2]
-    source = sys.argv[3]
-    output = sys.argv[4]
-
+def main(type_, input_, source, output):
     landsea = ds.read(LANDSEA_MASK_FILE)
     landsea_1x1deg = ds.read(LANDSEA_MASK_FILE_1X1DEG)
 
@@ -607,3 +674,14 @@ if __name__ == "__main__":
             raise ValueError('invalid type "%s"' % type_)
         for future in as_completed(futures):
             future.result()
+
+
+if __name__ == "__main__":
+    if len(sys.argv) != 5:
+        sys.stderr.write(sys.modules[__name__].__doc__)
+        sys.exit(1)
+    type_ = sys.argv[1]
+    input_ = sys.argv[2]
+    source = sys.argv[3]
+    output = sys.argv[4]
+    main(type_, input_, source, output)
