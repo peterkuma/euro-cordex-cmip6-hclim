@@ -1,0 +1,320 @@
+#!/usr/bin/env python3
+"""Plot annual cycle of anomalies between a reference and future time period.
+
+Usage: bin/plot_annual_cycle INPUT SOURCE... START_REF END_REF START_FUTURE END_FUTURE OUTPUT
+
+Arguments:
+
+  INPUT         Input directory.
+  SOURCE        Source name.
+  START_REF     Start year of the reference time period.
+  END_REF       End year of the reference time period.
+  START_FUTURE  Start year of the future time period.
+  END_FUTURE    End year of the future time period.
+  OUTPUT        Output plot.
+"""
+
+import sys
+import numpy as np
+from lib import io, misc
+import matplotlib as mpl
+from matplotlib.gridspec import GridSpec
+import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
+from matplotlib.lines import Line2D
+import ds_format as ds
+
+misc.load_mpl_fonts()
+
+mpl.rc("font", family="Open Sans")
+mpl.rc("axes", linewidth=0.3)
+mpl.rc("axes", grid=True)
+mpl.rcParams["axes.grid.axis"] = "x"
+mpl.rc("lines", linewidth=1.2)
+mpl.rc("xtick.major", width=0.3)
+mpl.rc("ytick.major", width=0.3)
+mpl.rc("legend", framealpha=1)
+mpl.rc("legend", facecolor="none")
+mpl.rc("legend", edgecolor="none")
+mpl.rc("legend", fancybox=False)
+mpl.rc("legend", fontsize=9)
+mpl.rc("grid", color="k")
+mpl.rc("grid", alpha=0.5)
+mpl.rc("grid", lw=0.1)
+mpl.rc("hatch", linewidth=0.05)
+mpl.rc("hatch", color="#000000a0")
+
+FIG_WIDTH = 11  # in
+TOP_MARGIN = 0.7  # in
+BOTTOM_MARGIN = 0.7  # in
+AXIS_HEIGHT = 2.4  # in
+
+VARS = [
+    ["tas", "tasmax", "tasmin"],
+    ["pr"],
+]
+
+LABELS = {
+    "tas": "Near-surface temperature (T)",
+    "tasmin": "Daily min. near-surface temp. (T$_\\mathrm{min}$)",
+    "tasmax": "Daily max. near-surface temp. (T$_\\mathrm{max}$)",
+    "pr": "Precipitation (R)",
+}
+
+REGIONS = [
+    "BI",
+    "FR",
+    "ME",
+    "IP",
+    "AL",
+    "MD",
+    "EA",
+    "SC",
+]
+
+COLORS = {
+    "tas": "#0700b0",
+    "tasmax": "#0090fd",
+    "tasmin": "#18ffff",
+    "pr": "#b91a04",
+}
+
+
+def read(input_, var, region, sources, period, index=None):
+    dd = []
+    vars = ["month", f"{var}_ac"]
+    for source in sources:
+        dd1 = io.read_dataset(
+            input_,
+            {
+                "season": "ANN",
+                "variable_id": var,
+                "region_code": region,
+                "source": source,
+                "start_year": period[0],
+                "end_year": period[1],
+            },
+            vars,
+            False,
+            index=index,
+        )
+        if len(dd1) == 0:
+            raise IOError(
+                f"could not read input file for variable {var!r}, source {source!r}, season 'ANN', region {region!r}, and time period {period[0]!r} to {period[1]!r}"
+            )
+        assert len(dd1) == 1
+        dd += [dd1[0]]
+    return dd
+
+
+def plot(
+    dd_ref,
+    dd_future,
+    var,
+    region,
+    color="k",
+    with_xlabel=True,
+    with_ylabel=True,
+    with_title=True,
+):
+    months = np.arange(1, 13)
+    name = f"{var}_ac"
+    units = ds.attr(dd_ref[0], "units", var=name)
+    if dd_future is None:
+        yy = [d[name] for d in dd_ref]
+    else:
+        yy = [d2[name] - d1[name] for d1, d2 in zip(dd_ref, dd_future)]
+    x = months
+    y = np.mean(yy, axis=0)
+    yl = np.percentile(yy, 0.5 * (100 - 68), axis=0)
+    yh = np.percentile(yy, 100 - 0.5 * (100 - 68), axis=0)
+    y, units_new = misc.convert_pretty_units(y, units)
+    yl, _ = misc.convert_pretty_units(yl, units)
+    yh, _ = misc.convert_pretty_units(yh, units)
+    units_pretty = misc.get_pretty_units(units_new)
+    plt.plot(x, y, color=color, lw=0.8)
+    plt.fill_between(x, yl, yh, color=color, alpha=0.03, edgecolor="none")
+    plt.plot(x, yl, color=color, linestyle="dotted", lw=0.6)
+    plt.plot(x, yh, color=color, linestyle="dotted", lw=0.6)
+    if dd_future is not None and var == "pr":
+        plt.axhline(0, color=color, linestyle="dashed", lw=0.5)
+    plt.xticks(x)
+    plt.xlim(1, 12)
+    if with_xlabel:
+        plt.xlabel("Month")
+    else:
+        plt.gca().set_xticklabels([])
+    if with_ylabel:
+        delta = "" if dd_future is None else "$\\Delta$"
+        if var.startswith("tas"):
+            label = "T"
+        elif var == "pr":
+            label = "R"
+        else:
+            label = None
+        plt.ylabel("%s%s (%s)" % (delta, label, units_pretty), color=color)
+    if var in [vars[0] for vars in VARS]:
+        plt.gca().tick_params(axis="y", colors=color)
+    plt.gca().spines["left"].set_color(COLORS[VARS[0][0]])
+    plt.gca().spines["right"].set_color(COLORS[VARS[1][0]])
+
+
+def get_figsize(nrows, ncols):
+    w = FIG_WIDTH
+    h = nrows * AXIS_HEIGHT + BOTTOM_MARGIN + TOP_MARGIN
+    return [w, h]
+
+
+def init_figure(nrows, ncols):
+    figsize = get_figsize(nrows, ncols)
+    plt.figure(figsize=figsize)
+    gs = GridSpec(
+        nrows,
+        ncols,
+        wspace=3.2 / figsize[0],
+        hspace=1.5 / figsize[1],
+        bottom=(BOTTOM_MARGIN / figsize[1]),
+        top=(1 - TOP_MARGIN / figsize[1]),
+    )
+    return gs
+
+
+def twinx(ax, side):
+    plt.sca(ax)
+    plt.twinx()
+    if side == 0:
+        plt.gca().yaxis.set_label_position("left")
+        plt.gca().yaxis.tick_left()
+    else:
+        plt.gca().yaxis.set_label_position("right")
+        plt.gca().yaxis.tick_right()
+
+
+def expand_yaxis(ax, half, side):
+    y1, y2 = plt.ylim()
+    dy = y2 - y1
+    ticks = plt.yticks()[0]
+    space = 0.07
+    if half == "top":
+        mask = (ticks >= y1 + space * dy) & (ticks <= y2)
+        plt.yticks(ticks[mask])
+        plt.axhline(y1, color="k", lw=0.3)
+        plt.ylim(y1 - dy, y2)
+        plt.gca().yaxis.label.set_position((0, 0.75))
+        twinx(ax, side)
+    else:
+        mask = (ticks >= y1) & (ticks <= y2 - space * dy)
+        plt.yticks(ticks[mask])
+        plt.ylim(y1, y2 + dy)
+        plt.gca().yaxis.label.set_position((0, 0.25))
+
+
+def plot_legend():
+    vars = [
+        VARS[side][i]
+        for side in range(len(VARS))
+        for i in range(len(VARS[side]))
+    ]
+    handles = [Line2D([0], [0], color=COLORS[var]) for var in vars]
+    labels = [LABELS[var] for var in vars]
+    fw, fh = plt.gcf().get_size_inches()
+    bbox_to_anchor = [8.9 / fw, 2.2 / fh]
+    plt.gcf().legend(
+        handles,
+        labels,
+        loc="center",
+        bbox_to_anchor=bbox_to_anchor,
+        fontsize=10,
+    )
+
+
+def get_scenario(attrs):
+    if "driving_experiment_id" in attrs:
+        s = attrs["driving_experiment_id"].split("+")[-1].upper()
+        if s.startswith("SSP"):
+            return "SSP%s-%s.%s" % (s[3], s[4], s[5])
+        return s
+
+
+def main(input_, sources, period_ref, period_future, output):
+    index = io.list_dataset(input_)
+    n = len(REGIONS)
+    ncols = 3
+    nrows = int(np.ceil(n / ncols))
+    gs = init_figure(nrows, ncols)
+    for i, region in enumerate(REGIONS):
+        row = i // ncols
+        col = i % ncols
+        plt.subplot(gs[i])
+        ax = plt.gca()
+        plt.title(misc.REGIONS[region][0], fontsize=10, fontweight="bold")
+        for side in range(len(VARS)):
+            if side == 1:
+                twinx(ax, side)
+            for plot_type in ["reference", "anomaly"]:
+                for j, var in enumerate(VARS[side]):
+                    dd_ref = read(
+                        input_, var, region, sources, period_ref, index=index
+                    )
+                    dd_future = read(
+                        input_, var, region, sources, period_future, index=index
+                    )
+                    scenario = get_scenario(ds.attrs(dd_future[0]))
+                    opts = dict(
+                        with_xlabel=(
+                            row == nrows - 1
+                            or row == nrows - 2
+                            and col >= n % ncols
+                        ),
+                        with_ylabel=(
+                            var == "tas"
+                            and col == 0
+                            or var == "pr"
+                            and (
+                                col == ncols - 1
+                                or row == nrows - 1
+                                and col == n % ncols - 1
+                            )
+                        ),
+                        color=COLORS[var],
+                    )
+                    if plot_type == "anomaly":
+                        plot(dd_ref, dd_future, var, region, **opts)
+                    else:
+                        plot(dd_ref, None, var, region, **opts)
+                expand_yaxis(
+                    ax, "bottom" if plot_type == "anomaly" else "top", side
+                )
+    plot_legend()
+    plt.suptitle(
+        "Annual cycle in %d–%d and change in %d–%d (%s) relative to %d–%d"
+        % (
+            period_ref[0],
+            period_ref[1],
+            period_future[0],
+            period_future[1],
+            scenario,
+            period_ref[0],
+            period_ref[1],
+        ),
+        fontsize=13,
+    )
+    plt.savefig(output, bbox_inches="tight", pad_inches=0)
+
+
+if __name__ == "__main__":
+    if len(sys.argv) < 8:
+        sys.stderr.write(sys.modules[__name__].__doc__)
+        sys.exit(1)
+    input_ = sys.argv[1]
+    sources = sys.argv[2:-5]
+    period_ref = int(sys.argv[-5]), int(sys.argv[-4])
+    period_future = int(sys.argv[-3]), int(sys.argv[-2])
+    output = sys.argv[-1]
+    main(
+        input_,
+        sources,
+        period_ref,
+        period_future,
+        output,
+    )
