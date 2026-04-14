@@ -87,6 +87,7 @@ Tasks:
   model_ranking         Calculate model ranking (dep: calc_stats).
   plot_ranking          Plot model ranking (dep: model_ranking).
   plot_timeseries       Plot time series (dep: calc_stats).
+  plot_annual_cycle     Plot annual cycle (dep: calc_stats).
 EOF
 	;;
 
@@ -259,6 +260,15 @@ plot_timeseries)
         2071 2100 \
         plot/timeseries/hclim_historical+ssp370.pdf
     ;;
+
+plot_annual_cycle)
+	mkdir -p plot
+	cmd bin/plot_annual_cycle \
+		data/stats/hclim_historical+ssp370/period_season_region \
+		$(cat sources/list/hclim_historical+ssp370) \
+		1991 2020 \
+		2071 2100 \
+		plot/annual_cycle.pdf
 
 *)
 	echo "$0: unknown task \"$task\"" >&2

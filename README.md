@@ -61,6 +61,7 @@ plot_gcm_rcm_scatter  Plot GCM-RCM scatter plot for temperature and precipitatio
 model_ranking         Calculate model ranking (dep: calc_stats).
 plot_ranking          Plot model ranking (dep: model_ranking).
 plot_timeseries       Plot time series (dep: calc_stats).
+plot_annual_cycle     Plot annual cycle (dep: calc_stats).
 ```
 
 The individual processing and plotting commands are under `bin`. To see help
