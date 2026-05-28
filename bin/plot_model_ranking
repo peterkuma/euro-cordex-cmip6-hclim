@@ -60,10 +60,7 @@ def plot(sources, ranks, title, color):
     order = np.argsort(ranks)
     sources = sources[order]
     ranks = ranks[order]
-    labels = [
-        misc.get_source_title(misc.parse_dataset_name("x_" + s))
-        for s in sources
-    ]
+    labels = [misc.get_source_title(misc.parse_source(s)) for s in sources]
     labels = ["%d. %s" % (i + 1, label) for i, label in enumerate(labels)]
     plt.barh(np.array(labels)[::-1], ranks[::-1], color=color)
     plt.xlim(1, 6)

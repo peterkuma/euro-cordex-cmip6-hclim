@@ -1,0 +1,313 @@
+#!/usr/bin/env python3
+"""Plot GCM vs. RCM near-surface temperature scatter plot.
+
+Usage: bin/plot_gcm_rcm_tas INPUT_GCM INPUT_RCM SOURCE... START1 END1 START2 END2 OUTPUT
+
+Arguments:
+
+  INPUT_GCM  Input directory GCM - the output of calc_stats period_season_region.
+  INPUT_RCM  Input directory RCM - the output of calc_stats period_season_region.
+  SOURCE     Source name.
+  START1     Start year reference.
+  END1       End year reference.
+  START2     Start year future.
+  END2       End year future.
+  OUTPUT     Output plot (PDF).
+"""
+
+import sys
+import string
+import ds_format as ds
+from lib import io, misc
+import matplotlib.pyplot as plt
+import matplotlib as mpl
+import numpy as np
+from matplotlib.gridspec import GridSpec
+from matplotlib.lines import Line2D
+from matplotlib.ticker import MaxNLocator
+
+misc.load_mpl_fonts()
+
+mpl.rc("font", family="Open Sans")
+mpl.rc("axes", linewidth=0.4)
+mpl.rc("axes", grid=True)
+mpl.rc("lines", linewidth=1.2)
+mpl.rc("xtick.major", width=0.4)
+mpl.rc("ytick.major", width=0.4)
+mpl.rc("xtick.major", size=5)
+mpl.rc("ytick.major", size=5)
+mpl.rc("xtick.minor", visible=True)
+mpl.rc("ytick.minor", visible=True)
+mpl.rc("xtick.minor", width=0.2)
+mpl.rc("ytick.minor", width=0.2)
+mpl.rc("xtick.minor", size=2.5)
+mpl.rc("ytick.minor", size=2.5)
+mpl.rc("legend", framealpha=1)
+mpl.rc("legend", facecolor="none")
+mpl.rc("legend", edgecolor="none")
+mpl.rc("legend", fancybox=False)
+mpl.rc("legend", fontsize=7)
+mpl.rc("grid", color="k")
+mpl.rc("grid", alpha=0.4)
+mpl.rc("grid", lw=0.1)
+
+
+INPUT_GCM_ECS_TCR = "input/gcm_ecs_tcr.csv"
+
+REGIONS = [
+    "BI",
+    "FR",
+    "ME",
+    "IP",
+    "AL",
+    "MD",
+    "EA",
+    "SC",
+]
+
+COLORS = [
+    "#0700b0",
+    "#0090fd",
+    "#002715",
+    "#38ffa1",
+    "#18ffff",
+    "#ebff4b",
+    "#f18000",
+    "#b91a04",
+]
+
+MARKERS = [
+    "o",
+    "s",
+    "D",
+    "*",
+    "v",
+    "^",
+]
+
+
+def read(input_, sources, region, start, end, index=None):
+    dd = []
+    for source in sources:
+        desc = misc.parse_source(source)
+        desc.update(
+            {
+                "season": "ANN",
+                "variable_id": "tas",
+                "region_code": region,
+                "start_year": start,
+                "end_year": end,
+            }
+        )
+        dd1 = io.read_dataset(
+            input_, desc, "tas_mean", False, index=index, req_one=True
+        )
+        dd += [dd1[0]]
+    return dd
+
+
+def read_gcm_ecs_tcr(input_):
+    d = ds.read(input_)
+    return {
+        model: [ecs, tcr]
+        for model, ecs, tcr in zip(d["model"], d["ecs"], d["tcr"])
+    }
+
+
+def get_models(dd):
+    return [ds.attr(d, "driving_source_id") for d in dd]
+
+
+def get_gcm_ecs(type_, gcm_ecs_tcr, models):
+    assert type_ in ["ECS", "TCR"]
+    i = 0 if type_ == "ECS" else 1
+    return np.array([gcm_ecs_tcr[model][i] for model in models])
+
+
+def get_tas(dd):
+    return np.array([d["tas_mean"] for d in dd])
+
+
+def normalize(x):
+    return (x - np.mean(x)) / np.std(x)
+
+
+def plot_panel(type_, gcm_ecs_tcr, dd_gcm1, dd_gcm2, dd_rcm1, dd_rcm2, color):
+    yy1 = get_tas(dd_rcm1)
+    yy2 = get_tas(dd_rcm2)
+    yy = yy2 - yy1
+
+    if type_ in ["ECS", "TCR"]:
+        models = get_models(dd_rcm1)
+        xx = get_gcm_ecs(type_, gcm_ecs_tcr, models)
+        label = type_
+        xx = normalize(xx)
+        yy = normalize(yy)
+        label1 = "Normalised"
+        label2 = type_
+        lim = [-2, 2]
+    elif type_ == "delta_T":
+        xx1 = get_tas(dd_gcm1)
+        xx2 = get_tas(dd_gcm2)
+        xx = xx2 - xx1
+        label1 = ""
+        label2 = "$\\Delta$T (°C)"
+        lim = [1, 5]
+    else:
+        raise ValueError(f"invalid type {type_!r}")
+
+    for i, (x, y) in enumerate(zip(xx, yy)):
+        plt.scatter(x, y, color=color, s=20, marker=MARKERS[i])
+    plt.gca().set_aspect("equal", adjustable="box")
+    locator = mpl.ticker.MaxNLocator(nbins=5, steps=[1, 2, 2.5, 5, 10])
+    plt.gca().xaxis.set_major_locator(locator)
+    plt.gca().yaxis.set_major_locator(locator)
+    plt.plot(
+        [lim[0], lim[1]],
+        [lim[0], lim[1]],
+        color="k",
+        lw=0.1,
+    )
+    plt.xlim(lim)
+    plt.ylim(lim)
+    plt.xlabel(label1 + " GCM " + label2)
+    plt.ylabel(label1 + " RCM " + label2)
+
+
+def get_gcm_sources(sources_rcm, dd_rcm):
+    sources_gcm = []
+    for source_rcm, d_rcm in zip(sources_rcm, dd_rcm):
+        a = ds.attrs(d_rcm)
+        eid = a["driving_experiment_id"]
+        if eid == "evaluation":
+            eid = "rean"
+        if a["driving_source_id"] == "ERA5":
+            source_gcm = "EUR-12lcc_REAN_rean_r1i1p1f1_ECMWF_ERA5_v1-r1_mon"
+        else:
+            source_gcm = misc.get_source_name(
+                {
+                    "source_id": a["driving_source_id"],
+                    "experiment_id": eid,
+                    "variant_label": a["driving_variant_label"],
+                }
+            )
+        sources_gcm += [source_gcm]
+    return sources_gcm
+
+
+def plot_region_legend(regions):
+    handles = [
+        Line2D(
+            [],
+            [],
+            color=COLORS[i],
+            marker="o",
+            markersize=4,
+            linestyle="None",
+        )
+        for i in range(len(regions))
+    ]
+    labels = [misc.REGIONS[region][0] for region in regions]
+    plt.gcf().legend(
+        handles,
+        labels,
+        loc="upper left",
+        bbox_to_anchor=(0.49, 0.465),
+        fontsize=9,
+        handletextpad=0,
+    )
+
+
+def plot_model_legend(models):
+    handles = [
+        Line2D(
+            [],
+            [],
+            color="k",
+            marker=MARKERS[i],
+            markersize=4,
+            linestyle="None",
+        )
+        for i in range(len(models))
+    ]
+    labels = models
+    plt.gcf().legend(
+        handles,
+        labels,
+        loc="upper left",
+        bbox_to_anchor=(0.7, 0.465),
+        fontsize=9,
+        handletextpad=0,
+    )
+
+
+def get_title(d):
+    title = misc.get_source_title(ds.attrs(d))
+    if title == "EC-Earth3-Veg":
+        return title + "/" + ds.attr(d, "variant_label")[:2]
+    else:
+        return title
+
+
+def main(input_gcm, input_rcm, sources, start1, end1, start2, end2, output):
+    gcm_ecs_tcr = read_gcm_ecs_tcr(INPUT_GCM_ECS_TCR)
+    index_gcm = io.list_dataset(input_gcm)
+    index_rcm = io.list_dataset(input_rcm)
+
+    plt.figure(figsize=(8, 8))
+    gs = GridSpec(2, 2, hspace=0.25, wspace=0.25)
+
+    for i, type_ in enumerate(["ECS", "TCR", "delta_T"]):
+        plt.subplot(gs[i])
+        for j, region in enumerate(REGIONS):
+            dd_rcm1 = read(input_rcm, sources, region, start1, end1, index_rcm)
+            dd_rcm2 = read(input_rcm, sources, region, start2, end2, index_rcm)
+            sources_gcm = get_gcm_sources(sources, dd_rcm1)
+            dd_gcm1 = read(
+                input_gcm, sources_gcm, region, start1, end1, index_gcm
+            )
+            dd_gcm2 = read(
+                input_gcm, sources_gcm, region, start2, end2, index_gcm
+            )
+            model_labels = [get_title(d) for d in dd_gcm1]
+
+            models = get_models(dd_rcm1)
+            tcr = get_gcm_ecs("TCR", gcm_ecs_tcr, models)
+            o = np.argsort(tcr)
+
+            plot_panel(
+                type_,
+                gcm_ecs_tcr,
+                np.array(dd_gcm1)[o],
+                np.array(dd_gcm2)[o],
+                np.array(dd_rcm1)[o],
+                np.array(dd_rcm2)[o],
+                color=COLORS[j],
+            )
+        plt.text(
+            0.02,
+            0.98,
+            "(%s)" % string.ascii_lowercase[i],
+            va="top",
+            transform=plt.gca().transAxes,
+            weight="bold",
+        )
+    plot_region_legend(REGIONS)
+    plot_model_legend(np.array(model_labels)[o])
+    plt.savefig(output, bbox_inches="tight")
+    print(f"-> {output}")
+
+
+if __name__ == "__main__":
+    if len(sys.argv) < 9:
+        sys.stderr.write(sys.modules[__name__].__doc__)
+        sys.exit(1)
+    input_gcm = sys.argv[1]
+    input_rcm = sys.argv[2]
+    sources = sys.argv[3:-5]
+    start1 = int(sys.argv[-5])
+    end1 = int(sys.argv[-4])
+    start2 = int(sys.argv[-3])
+    end2 = int(sys.argv[-2])
+    output = sys.argv[-1]
+    main(input_gcm, input_rcm, sources, start1, end1, start2, end2, output)

@@ -20,19 +20,26 @@ from lib import io, misc
 import matplotlib as mpl
 from matplotlib.gridspec import GridSpec
 import matplotlib.pyplot as plt
-import matplotlib.ticker as mticker
+from matplotlib.ticker import MaxNLocator
 from matplotlib.lines import Line2D
 import ds_format as ds
 
 misc.load_mpl_fonts()
 
 mpl.rc("font", family="Open Sans")
-mpl.rc("axes", linewidth=0.3)
+mpl.rc("axes", linewidth=0.4)
 mpl.rc("axes", grid=True)
-mpl.rcParams["axes.grid.axis"] = "x"
+mpl.rc("axes.grid", axis="x")
 mpl.rc("lines", linewidth=1.2)
-mpl.rc("xtick.major", width=0.3)
-mpl.rc("ytick.major", width=0.3)
+mpl.rc("xtick.major", width=0.4)
+mpl.rc("ytick.major", width=0.4)
+mpl.rc("xtick.major", size=5)
+mpl.rc("ytick.major", size=5)
+mpl.rc("ytick.minor", visible=True)
+mpl.rc("xtick.minor", width=0.2)
+mpl.rc("ytick.minor", width=0.2)
+mpl.rc("xtick.minor", size=2.5)
+mpl.rc("ytick.minor", size=2.5)
 mpl.rc("legend", framealpha=1)
 mpl.rc("legend", facecolor="none")
 mpl.rc("legend", edgecolor="none")
@@ -84,25 +91,19 @@ def read(input_, var, region, sources, period, index=None):
     dd = []
     vars = ["month", f"{var}_ac"]
     for source in sources:
-        dd1 = io.read_dataset(
-            input_,
+        desc = misc.parse_source(source)
+        desc.update(
             {
                 "season": "ANN",
                 "variable_id": var,
                 "region_code": region,
-                "source": source,
                 "start_year": period[0],
                 "end_year": period[1],
-            },
-            vars,
-            False,
-            index=index,
+            }
         )
-        if len(dd1) == 0:
-            raise IOError(
-                f"could not read input file for variable {var!r}, source {source!r}, season 'ANN', region {region!r}, and time period {period[0]!r} to {period[1]!r}"
-            )
-        assert len(dd1) == 1
+        dd1 = io.read_dataset(
+            input_, desc, vars, False, index=index, req_one=True
+        )
         dd += [dd1[0]]
     return dd
 
@@ -136,6 +137,8 @@ def plot(
     plt.fill_between(x, yl, yh, color=color, alpha=0.03, edgecolor="none")
     plt.plot(x, yl, color=color, linestyle="dotted", lw=0.6)
     plt.plot(x, yh, color=color, linestyle="dotted", lw=0.6)
+    locator = mpl.ticker.MaxNLocator(nbins=7, steps=[1, 2, 2.5, 5, 10])
+    plt.gca().yaxis.set_major_locator(locator)
     if dd_future is not None and var == "pr":
         plt.axhline(0, color=color, linestyle="dashed", lw=0.5)
     plt.xticks(x)
@@ -194,17 +197,22 @@ def expand_yaxis(ax, half, side):
     y1, y2 = plt.ylim()
     dy = y2 - y1
     ticks = plt.yticks()[0]
+    mticks = plt.gca().get_yticks(minor=True)
     space = 0.07
     if half == "top":
         mask = (ticks >= y1 + space * dy) & (ticks <= y2)
+        mmask = (mticks >= y1) & (mticks <= y2)
         plt.yticks(ticks[mask])
+        plt.gca().set_yticks(mticks[mmask], minor=True)
         plt.axhline(y1, color="k", lw=0.3)
         plt.ylim(y1 - dy, y2)
         plt.gca().yaxis.label.set_position((0, 0.75))
         twinx(ax, side)
     else:
         mask = (ticks >= y1) & (ticks <= y2 - space * dy)
+        mmask = (mticks >= y1) & (mticks <= y2)
         plt.yticks(ticks[mask])
+        plt.gca().set_yticks(mticks[mmask], minor=True)
         plt.ylim(y1, y2 + dy)
         plt.gca().yaxis.label.set_position((0, 0.25))
 
@@ -300,6 +308,7 @@ def main(input_, sources, period_ref, period_future, output):
         fontsize=13,
     )
     plt.savefig(output, bbox_inches="tight", pad_inches=0)
+    print(f"->{output}")
 
 
 if __name__ == "__main__":

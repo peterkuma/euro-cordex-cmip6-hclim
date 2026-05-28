@@ -1,0 +1,8 @@
+#!/usr/bin/env python3
+import sys
+import ds_format as ds
+from lib import misc
+
+filename = sys.argv[1]
+d = ds.read(filename)
+print(misc.get_source_name(ds.attrs(d)))

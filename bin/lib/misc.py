@@ -41,6 +41,48 @@ UNITS_PRETTY = {
 }
 
 
+def parse_source(source):
+    parts = source.split("_")
+    if len(parts) == 7:
+        if parts[5] == "ERA5":
+            return {
+                "domain_id": parts[0],
+                "driving_source_id": parts[1],
+                "experiment_id": parts[2],
+                "driving_variant_label": parts[3],
+                "institute_id": parts[4],
+                "source_id": parts[5],
+            }
+        elif parts[1] in ["OBS", "REAN"]:
+            return {
+                "domain_id": parts[0],
+                "driving_source_id": parts[1],
+                "experiment_id": parts[2],
+                "driving_variant_label": parts[3],
+                "institution_id": parts[4],
+                "source_id": parts[5],
+                "version_realization": parts[6],
+            }
+        else:
+            return {
+                "domain_id": parts[0],
+                "driving_source_id": parts[1],
+                "driving_experiment_id": parts[2],
+                "driving_variant_label": parts[3],
+                "institution_id": parts[4],
+                "source_id": parts[5],
+                "version_realization": parts[6],
+            }
+    elif len(parts) == 3:
+        return {
+            "source_id": parts[0],
+            "experiment_id": parts[1],
+            "variant_label": parts[2],
+        }
+    else:
+        return None
+
+
 def get_source_name(a):
     if "domain_id" in a:
         eid = a.get("driving_experiment_id", a.get("experiment_id"))
@@ -53,14 +95,17 @@ def get_source_name(a):
             a.get("institution_id", a.get("institute_id")),
             a["source_id"],
             a.get("version_realization", "v1-r1"),
-            a["frequency"],
         ]
     else:
-        x = [
-            a["source_id"],
-            a["experiment_id"].lower(),
-            a.get("variant_label", a.get("driving_variant_label")),
-        ]
+        try:
+            x = [
+                a["source_id"],
+                a["experiment_id"].lower(),
+                a.get("variant_label", a.get("driving_variant_label")),
+            ]
+        except KeyError:
+            print(a)
+            raise
     return "_".join(x)
 
 

@@ -40,30 +40,20 @@ SEASONS = [
 
 
 def read(input_, var, names, season, region, source, index):
-    desc = {
-        "variable_id": var,
-        "season": season,
-        "region_code": region,
-        "start_year": start,
-        "end_year": end,
-        "source": source,
-    }
-    dd = io.read_dataset(
-        input_,
-        desc,
-        names,
-        merge=False,
-        index=index,
+    desc = misc.parse_source(source)
+    desc.update(
+        {
+            "variable_id": var,
+            "season": season,
+            "region_code": region,
+            "start_year": start,
+            "end_year": end,
+        }
     )
-    if len(dd) == 1:
-        return dd[0]
-    elif len(dd) == 0:
-        return
-    else:
-        raise IOError(
-            "too many input files for var = %s, season = %s, region = %s, source = %s"
-            % (var, season, region, source)
-        )
+    dd = io.read_dataset(
+        input_, desc, names, merge=False, index=index, req_one=True
+    )
+    return dd[0]
 
 
 def is_ref(var, d):
@@ -107,10 +97,17 @@ if __name__ == "__main__":
                 z_sd = np.full(n, np.nan, float)
                 mask = np.full(n, False, bool)
                 for i, source in enumerate(sources):
+                    if (
+                        var == "pr"
+                        and source
+                        == "EUR-12lcc_REAN_rean_r1i1p1f1_ECMWF_CERRA_v1-r1"
+                        or var != "pr"
+                        and source
+                        == "EUR-12lcc_REAN_rean_r1i1p1f1_ECMWF_CERRA-Land_v1-r1"
+                    ):
+                        continue
                     d = read(input_, var, [name], season, region, source, index)
                     if d is None:
-                        continue
-                    if var == "pr" and ds.attr(d, "source_id") == "CERRA":
                         continue
                     eid = ds.attr(d, "experiment_id")
                     z_mean[i] = np.ma.mean(d[name])

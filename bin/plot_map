@@ -63,10 +63,10 @@ NCOLS = 4
 
 VARS = [
     "pr",
-    # "psl",
+    "psl",
     "tas",
-    # "tasmax",
-    # "tasmin",
+    "tasmax",
+    "tasmin",
 ]
 
 SEASONS = [
@@ -470,25 +470,28 @@ def read(input_, sources, var, name, season, period, index):
         "crs",
     ]
     for i, source in enumerate(sources):
-        dd1 = io.read_dataset(
-            input_,
+        desc = misc.parse_source(source)
+        desc.update(
             {
-                "source": source,
                 "variable_id": var,
                 "season": season,
                 "start_year": period[0],
                 "end_year": period[1],
-            },
-            vars,
-            False,
-            index=index,
+            }
         )
-        if len(dd1) == 0:
+
+        if (
+            source == "EUR-12lcc_REAN_rean_r1i1p1f1_ECMWF_CERRA-Land_v1-r1"
+            and var != "pr"
+            or source == "EUR-12lcc_REAN_rean_r1i1p1f1_ECMWF_CERRA_v1-r1"
+            and var == "pr"
+        ):
             continue
-        assert len(dd1) == 1
+
+        dd1 = io.read_dataset(
+            input_, desc, vars, False, index=index, req_one=True
+        )
         d = dd1[0]
-        if var == "pr" and d["."]["."]["source_id"] == "CERRA":
-            continue
         dd += [d]
     return dd
 
@@ -667,7 +670,7 @@ def init_figure(nrows, ncols):
 
 def calc_relative(z1, z2, var, units):
     if var == "pr":
-        z = (z1 - z2) / z2 * 100
+        # z = (z1 - z2) / z2 * 100
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", category=RuntimeWarning)
             z = np.log(z1 / z2)
@@ -737,8 +740,9 @@ def plot(type_, input_, sources, output, var, name, season, period, index):
     dd_ens = [d for d in dd if misc.get_source_name(ds.attrs(d)) in ens_members]
 
     if type_ == "mean":
+        paired = [not is_gcm(d) for d in dd_rel_wo_ens]
         calc_pvalue_parallel(
-            dd_rel_wo_ens, [d_ref] * len(dd_rel_wo_ens), name, paired=True
+            dd_rel_wo_ens, [d_ref] * len(dd_rel_wo_ens), name, paired=paired
         )
         d_ens["robust_sign"], d_ens["robust_variability"] = calc_robust_signal(
             d_ref["year"],
@@ -763,7 +767,7 @@ def plot(type_, input_, sources, output, var, name, season, period, index):
     n = len(dd)
     ncols = NCOLS
     nrows = int(np.ceil(n / ncols))
-    fig, figsize, gs = init_figure(n, nrows, ncols)
+    fig, figsize, gs = init_figure(nrows, ncols)
 
     for i, d in enumerate(dd):
         source = misc.get_source_name(ds.attrs(d))

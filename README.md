@@ -49,8 +49,10 @@ where `TASK` is the task name. The following tasks are available:
 source_links          Create source symlinks in the input directory.
 remap_landmask        Remap land mask to a 1x1 degree grid for GCM calculations.
 remap_obs             Remap observatiosn to a 1x1 degree grid for GCM calculations.
-ensemble              Create an model ensemble.
+calc_ensembles        Calculate model ensembles.
 calc_stats            Calculate statistics (dep: source_links, remap_landmask, remap_obs, ensemble).
+calc_indices          Calculate climate indices.
+calc_model_ranking    Calculate model ranking (dep: calc_stats).
 plot_map_mean         Plot maps for means (dep: calc_stats).
 plot_map_trend        Plot maps for linear trends (dep: calc_stats).
 plot_map_diff         Plot maps for differences between time periods (dep: calc_stats).
@@ -58,10 +60,10 @@ plot_heatmap_mean     Plot heatmaps for means (dep: calc_stats).
 plot_heatmap_diff     Plot heatmaps for differences between time periods (dep: calc_stats).
 plot_boxplot          Plot boxplots with statistics (dep: calc_stats).
 plot_gcm_rcm_scatter  Plot GCM-RCM scatter plot for temperature and precipitation (dep: calc_stats).
-model_ranking         Calculate model ranking (dep: calc_stats).
-plot_ranking          Plot model ranking (dep: model_ranking).
+plot_model_ranking    Plot model ranking (dep: model_ranking).
 plot_timeseries       Plot time series (dep: calc_stats).
 plot_annual_cycle     Plot annual cycle (dep: calc_stats).
+plot_gcm_rcm_tas      Plot GCM. vs RCM. temperature change.
 ```
 
 The individual processing and plotting commands are under `bin`. To see help

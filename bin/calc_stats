@@ -15,18 +15,19 @@ import signal
 
 signal.signal(signal.SIGINT, signal.SIG_DFL)
 
+import traceback
 import calendar
 import copy
 import os
 import sys
 import warnings
 from concurrent.futures import ProcessPoolExecutor, as_completed
-
 import aquarius_time as aq
 import ds_format as ds
 import numpy as np
 import pyproj
 import scipy.stats
+from scipy.stats._axis_nan_policy import SmallSampleWarning
 from lib import io, misc
 from matplotlib.typing import ColorType
 
@@ -68,13 +69,13 @@ SEASON_YEAR_OFFSET = {
 }
 
 PERIODS = [
-    # [1991, 2100],
     # [1981, 2020],
     [1991, 2020],
+    # [1991, 2100],
     # [1995, 2014],
     # [2021, 2040],
     # [2041, 2060],
-    [2071, 2100],
+    # [2071, 2100],
     # [2081, 2100],
 ]
 
@@ -111,10 +112,6 @@ META = {
         "long_name": "percentile",
         "units": "%",
     },
-}
-
-FREQUENCY = {
-    "mon": "monthly",
 }
 
 
@@ -192,7 +189,7 @@ def calc_period_stat(stat_type, d, do, var, period, season):
     else:
         raise KeyError(stat_type)
     copy_var_attrs(d, do, var, name)
-    freq_name = FREQUENCY[ds.attr(d, "frequency")]
+    freq_name = "annual" if season == "ANN" else "seasonal"
     long_name = ds.attr(d, "long_name", var=var)
     if long_name is not None:
         long_name = long_name.lower() + " %s %s" % (freq_name, stat_name)
@@ -237,7 +234,7 @@ def calc_annual_stat(stat_type, d, do, var, period, season):
     copy_var_attrs(d, do, var, name)
     ds.dims(do, name, dims)
     stat_name = {"mean_ts": "mean time series"}[stat_type]
-    freq_name = FREQUENCY[ds.attr(d, "frequency")]
+    freq_name = "annual" if season == "ANN" else "seasonal"
     long_name = ds.attr(d, "long_name", var=var)
     if long_name is not None:
         long_name = long_name.lower() + " %s %s" % (freq_name, stat_name)
@@ -438,10 +435,13 @@ def get_experiment_id(source):
         return parts[2]  # HCLIM
 
 
-def get_output_filename(output, var, source, period, season, region_code):
-    file = "%s_%s_%d-%d_%s" % (
+def get_output_filename(
+    output, var, source, frequency, period, season, region_code
+):
+    file = "%s_%s_%s_%d-%d_%s" % (
         var,
         source,
+        frequency,
         period[0],
         period[1],
         season,
@@ -454,7 +454,7 @@ def get_output_filename(output, var, source, period, season, region_code):
 
 def write(do, output, var, source, period, season, region_code):
     output_filename = get_output_filename(
-        output, var, source, period, season, region_code
+        output, var, source, "yr", period, season, region_code
     )
     try:
         os.remove(output_filename)
@@ -577,6 +577,8 @@ def process_period_season_region(
     if experiment_id.lower() not in ["rean", "obs"]:
         ds.attr(do, exp_key, "combined historical and future")
 
+    ds.attr(do, "frequency", "yr")
+
     return do
 
 
@@ -603,6 +605,8 @@ def process(
         if np.any(lon >= 180):
             lon1 = lon1 % 360
             lon2 = lon2 % 360
+    else:
+        region_code = None
 
     if geo_mean:
         bounds = [lon1, lon2, lat1, lat2]
@@ -615,30 +619,38 @@ def process(
             water = 100 - landsea_1x1deg["sftlf"].T
             weights = calc_geo_weights_lonlat(lon, lat, bounds)
         weights[water > 50] = 0
+    else:
+        weights = None
 
     ignore_warnings()
 
     for period in PERIODS:
         for season in SEASONS.keys():
-            do = process_period_season_region(
-                d,
-                source,
-                period,
-                season,
-                var,
-                region,
-                geo_mean=geo_mean,
-                weights=weights,
-            )
-            if do is not None:
-                write(do, output, var, source, period, season, region_code)
+            try:
+                do = process_period_season_region(
+                    d,
+                    source,
+                    period,
+                    season,
+                    var,
+                    region,
+                    geo_mean=geo_mean,
+                    weights=weights,
+                )
+                if do is not None:
+                    write(do, output, var, source, period, season, region_code)
+            except Exception as e:
+                tb_str = traceback.format_exc()
+                warnings.warn(
+                    f"error in processing source {source!r}, period {period!r}, seasons {season!r}, variable {var!r}, region {region!r}: {tb_str}"
+                )
 
 
 def main(type_, input_, source, output):
     landsea = ds.read(LANDSEA_MASK_FILE)
     landsea_1x1deg = ds.read(LANDSEA_MASK_FILE_1X1DEG)
 
-    with ProcessPoolExecutor(1) as ex:
+    with ProcessPoolExecutor() as ex:
         index = io.list_dataset(input_, ex=ex)
         futures = []
         if type_ == "period_season":

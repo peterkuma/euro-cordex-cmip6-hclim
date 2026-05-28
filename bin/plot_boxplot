@@ -93,31 +93,20 @@ VLIM = {
 
 
 def read(input_, var, names, season, region, source, index):
-    desc = {
-        "variable_id": var,
-        "season": season,
-        "region_code": region,
-        "start_year": start,
-        "end_year": end,
-        "source": source,
-    }
-    dd = io.read_dataset(
-        input_,
-        desc,
-        names,
-        merge=False,
-        index=index,
+    desc = misc.parse_source(source)
+    desc.update(
+        {
+            "variable_id": var,
+            "season": season,
+            "region_code": region,
+            "start_year": start,
+            "end_year": end,
+        }
     )
-    # print(input_, var, names, season, region, source, len(dd))
-    if len(dd) == 1:
-        return dd[0]
-    elif len(dd) == 0:
-        return
-    else:
-        raise IOError(
-            "too many input files for var = %s, season = %s, region = %s, source = %s"
-            % (var, season, region, source)
-        )
+    dd = io.read_dataset(
+        input_, desc, names, merge=False, index=index, req_one=True
+    )
+    return dd[0]
 
 
 if __name__ == "__main__":
@@ -135,8 +124,7 @@ if __name__ == "__main__":
     ncols = len(SEASONS)
 
     labels = [
-        misc.get_source_title(misc.parse_dataset_name("x_" + source))
-        for source in sources
+        misc.get_source_title(misc.parse_source(source)) for source in sources
     ]
 
     for region in misc.REGIONS.keys():
@@ -155,13 +143,20 @@ if __name__ == "__main__":
                 var_axes += [plt.subplot(gs[i * ncols + j])]
                 xx = []
                 for source in sources:
-                    d = read(input_, var, [name], season, region, source, index)
-                    factor = FACTOR.get(var, 1)
-                    if d is None or (
-                        var == "pr" and ds.attr(d, "source_id") == "CERRA"
+                    if (
+                        var != "pr"
+                        and source
+                        == "EUR-12lcc_REAN_rean_r1i1p1f1_ECMWF_CERRA-Land_v1-r1"
+                        or var == "pr"
+                        and source
+                        == "EUR-12lcc_REAN_rean_r1i1p1f1_ECMWF_CERRA_v1-r1"
                     ):
                         x = []
                     else:
+                        d = read(
+                            input_, var, [name], season, region, source, index
+                        )
+                        factor = FACTOR.get(var, 1)
                         x = d[name] * factor
                     xx += [x]
                 plt.boxplot(

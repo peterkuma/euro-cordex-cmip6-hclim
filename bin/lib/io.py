@@ -12,7 +12,6 @@ from . import misc
 def get_dataset_attrs(filename):
     d = ds.read(filename, [], full=True)
     a = ds.attrs(d)
-    a["source"] = misc.get_source_name(a)
     if "period" in a:
         start_year, end_year = a["period"].split("-")
         a["start_year"] = int(start_year)
@@ -58,7 +57,7 @@ def list_dataset(dirname, ex=None, force=False):
     return [res for res in results if res is not None]
 
 
-def read_dataset(dirname, desc, vars, merge=True, index=None):
+def read_dataset(dirname, desc, vars, merge=True, index=None, req_one=False):
     dd = []
     if index is None:
         index = list_dataset(dirname)
@@ -76,6 +75,14 @@ def read_dataset(dirname, desc, vars, merge=True, index=None):
             continue
         d["filename"] = dataset["filename"]
         dd += [d]
+    if req_one:
+        if len(dd) == 0:
+            raise IOError(f"cannot read {dirname!r}, descriptor {desc!r}")
+        elif len(dd) > 1:
+            filenames = [d["filename"] for d in dd]
+            raise IOError(
+                f"more than one result for {dirname!r}, descriptor {desc!r}: {filenames!r}"
+            )
     if merge:
         return ds.merge(dd, "time", new="n")
     else:
