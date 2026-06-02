@@ -15,21 +15,22 @@ import signal
 
 signal.signal(signal.SIGINT, signal.SIG_DFL)
 
-import traceback
 import calendar
 import copy
 import os
 import sys
+import traceback
 import warnings
 from concurrent.futures import ProcessPoolExecutor, as_completed
+
 import aquarius_time as aq
 import ds_format as ds
 import numpy as np
 import pyproj
 import scipy.stats
-from scipy.stats._axis_nan_policy import SmallSampleWarning
 from lib import io, misc
 from matplotlib.typing import ColorType
+from scipy.stats._axis_nan_policy import SmallSampleWarning
 
 LANDSEA_MASK_FILE = "input/landmask/sftlf_EUR-12_ERA5_evaluation_r1i1p1f1_HCLIMcom-SMHI_HCLIM43-ALADIN_v1-r1_fx.nc"
 LANDSEA_MASK_FILE_1X1DEG = "data/landmask/sftlf_EUR-12_ERA5_evaluation_r1i1p1f1_HCLIMcom-SMHI_HCLIM43-ALADIN_v1-r1_fx_1x1deg.nc"
