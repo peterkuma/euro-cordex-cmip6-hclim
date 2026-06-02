@@ -259,7 +259,7 @@ def plot_colorbar(var, bounds, cmap, label, units_pretty, relative, pos, fit):
     cb.ax.tick_params(labelsize=8)
 
 
-def plot_legend(fit=False):
+def plot_legend(fit=False, robustness=True):
     noens = Rectangle((0, 0), 1, 1, facecolor=COLOR_NOENS, edgecolor="none")
     ens = Rectangle((0, 0), 1, 1, facecolor=COLOR_ENS, edgecolor="none")
     notrobust = (Line2D([0, 1], [1, 0], color="k"),)
@@ -271,20 +271,15 @@ def plot_legend(fit=False):
         Line2D([0.25, 0.75], [0.75, 0.25], color="k"),
         Line2D([0.25, 0.75], [0.25, 0.75], color="k"),
     )
-    handles = [
-        noens,
-        ens,
-        notrobust,
-        conflicting,
-        nonsig,
-    ]
-    labels = [
-        "Not in ensemble",
-        "Ensemble",
-        "No change or no robust signal",
-        "Conflicting signals",
-        "Non-significant anomaly",
-    ]
+
+    handles = [noens, ens]
+    labels = ["Not in ensemble", "Ensemble"]
+    if robustness:
+        handles += [notrobust, conflicting]
+        labels += ["No change or no robust signal", "Conflicting signals"]
+    handles += [nonsig]
+    labels += ["Non-significant anomaly"]
+
     fw, fh = plt.gcf().get_size_inches()
     bbox_to_anchor = [5 / fw, 1.8 / fh] if fit else [0.5, 0.35 / fh]
     plt.gcf().legend(
@@ -728,6 +723,7 @@ def plot(type_, input_, sources, output, var, name, season, period, index):
                 has_absolute = True
                 units_pretty1 = misc.get_pretty_units(units)
             else:
+                units = ds.attr(d, "units", var=name)
                 d["z"], units = calc_relative(d[name], d_ref[name], var, units)
                 d["z_raw"] = d[name] - d_ref[name]
                 has_relative = True
@@ -736,20 +732,22 @@ def plot(type_, input_, sources, output, var, name, season, period, index):
 
     ens_members = get_ens_members(dd)
     dd_rel = [d for d in dd if d is not d_ref]
-    dd_rel_wo_ens = [d for d in dd if d is not d_ref and d is not d_ens]
+    # dd_rel_wo_ens = [d for d in dd if d is not d_ref and d is not d_ens]
     dd_ens = [d for d in dd if misc.get_source_name(ds.attrs(d)) in ens_members]
 
     if type_ == "mean":
-        paired = [not is_gcm(d) for d in dd_rel_wo_ens]
-        calc_pvalue_parallel(
-            dd_rel_wo_ens, [d_ref] * len(dd_rel_wo_ens), name, paired=paired
-        )
-        d_ens["robust_sign"], d_ens["robust_variability"] = calc_robust_signal(
-            d_ref["year"],
-            [d_ref[f"{name}_ts"]] * len(dd_ens),
-            [d_ref[f"{var}_trend"]] * len(dd_ens),
-            [d["z_raw"] for d in dd_ens],
-        )
+        # paired = [not is_gcm(d) for d in dd_rel_wo_ens]
+        paired = [not is_gcm(d) for d in dd_rel]
+        calc_pvalue_parallel(dd_rel, [d_ref] * len(dd_rel), name, paired=paired)
+        # calc_pvalue_parallel(
+        #     dd_rel_wo_ens, [d_ref] * len(dd_rel_wo_ens), name, paired=paired
+        # )
+        # d_ens["robust_sign"], d_ens["robust_variability"] = calc_robust_signal(
+        #     d_ref["year"],
+        #     [d_ref[f"{name}_ts"]] * len(dd_ens),
+        #     [d_ref[f"{var}_trend"]] * len(dd_ens),
+        #     [d["z_raw"] for d in dd_ens],
+        # )
     elif type_ == "diff":
         calc_pvalue_parallel(dd1[2:], dd2[2:], name, paired=False)
         d_ens["robust_sign"], d_ens["robust_variability"] = calc_robust_signal(
@@ -821,7 +819,7 @@ def plot(type_, input_, sources, output, var, name, season, period, index):
             var, bounds2, cmap2, label2, units_pretty2, True, pos2, colorbar_fit
         )
 
-    plot_legend(fit=(not colorbar_fit))
+    plot_legend(not colorbar_fit, type_ == "diff")
 
     title = get_title(
         type_, label1, season, period, get_scenario(ds.attrs(d_ref))
