@@ -689,7 +689,7 @@ def plot(type_, input_, index, output, var, sources, period):
     plot_colorbar(axs[0], var, vlim_abs, cmap_abs, label_abs, False)
     plot_colorbar(axs[0], var, vlim_rel, cmap_rel, label_rel, True)
 
-    plot_legend()
+    plot_legend(type_ == "diff")
 
     output_filename = get_output_filename(type_, output, var, period)
     plt.savefig(output_filename, bbox_inches="tight")
