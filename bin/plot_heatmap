@@ -265,7 +265,7 @@ def plot_colorbar(ax, var, vlim, cmap, label, rel):
     cb.set_label(label)
 
 
-def plot_legend():
+def plot_legend(robustness=True):
     ens = Rectangle((0, 0), 1, 1, facecolor=COLOR_ENS, edgecolor="none")
     notrobust = (Line2D([0, 1], [1, 0], color="k"),)
     conflicting = (
@@ -276,18 +276,15 @@ def plot_legend():
         Line2D([0.25, 0.75], [0.75, 0.25], color="k"),
         Line2D([0.25, 0.75], [0.25, 0.75], color="k"),
     )
-    handles = [
-        ens,
-        notrobust,
-        conflicting,
-        nonsig,
-    ]
-    labels = [
-        "Ensemble",
-        "No change or no robust signal",
-        "Conflicting signals",
-        "Non-significant anomaly",
-    ]
+
+    handles = [ens]
+    labels = ["Ensemble"]
+    if robustness:
+        handles += [notrobust, conflicting]
+        labels += ["No change or no robust signal", "Conflicting signals"]
+    handles += [nonsig]
+    labels += ["Non-significant anomaly"]
+
     fw, fh = plt.gcf().get_size_inches()
     plt.gcf().legend(
         handles,
@@ -605,20 +602,20 @@ def plot(type_, input_, index, output, var, sources, period):
         for i in range(nsources):
             if i == ref:
                 pass
-            if i == ens:
-                robust_sign[:, i], robust_variability[:, i] = (
-                    calc_robust_signal(
-                        years1,
-                        years1,
-                        values1_ts[:, mask_ens, :, :],
-                        values1_ts[:, [ref] * np.sum(mask_ens), :, :],
-                        values_raw[:, mask_ens, :],
-                    )
-                )
-            else:
-                pvalue[:, i] = calc_pvalue(
-                    values1_ts[:, i], values1_ts[:, ref], paired=True
-                )
+            # if i == ens:
+            #     robust_sign[:, i], robust_variability[:, i] = (
+            #         calc_robust_signal(
+            #             years1,
+            #             years1,
+            #             values1_ts[:, mask_ens, :, :],
+            #             values1_ts[:, [ref] * np.sum(mask_ens), :, :],
+            #             values_raw[:, mask_ens, :],
+            #         )
+            #     )
+            # else:
+            pvalue[:, i] = calc_pvalue(
+                values1_ts[:, i], values1_ts[:, ref], paired=True
+            )
     else:
         for i in range(nsources):
             if i != ref:
