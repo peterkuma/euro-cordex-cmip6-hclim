@@ -258,6 +258,17 @@ plot_heatmap_mean)
 	done
 	;;
 
+plot_heatmap_trend)
+	mkdir -p plot/heatmap_trend
+	for list in "${LISTS_HEATMAP_TREND}"; do
+		cmd bin/plot_heatmap \
+			trend \
+			"data/stats/$list/period_season_region" \
+			$(cat sources/list/{obs,"$list"}) \
+			"plot/heatmap_trend/$list"
+	done
+	;;
+
 plot_heatmap_diff)
 	mkdir -p plot/heatmap_diff
 	for list in "${LISTS_HEATMAP_DIFF}"; do
