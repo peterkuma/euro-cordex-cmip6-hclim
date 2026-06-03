@@ -296,19 +296,19 @@ def calc_annual_cycle(d, do, var, period):
 
 
 def calc_trend_elemental(year, data):
-    l, n, m = data.shape
-    trend = np.full((n, m), np.nan)
-    p = np.full((n, m), np.nan)
-    for i in range(n):
-        for j in range(m):
-            ts = data[:, i, j]
-            res = scipy.stats.linregress(year, ts)
-            trend[i, j] = res.slope
-            p[i, j] = res.pvalue
+    n = data.shape[0]
+    shape1 = data.shape[1:]
+    trend = np.full(shape1, np.nan)
+    p = np.full(shape1, np.nan)
+    for idx in np.ndindex(shape1):
+        ts = data[(...,) + idx]
+        res = scipy.stats.linregress(year, ts)
+        trend[idx] = res.slope
+        p[idx] = res.pvalue
     return trend, p
 
 
-def calc_trend(d, do, var, period, season):
+def calc_trend(d, do, var, period, season, region=None):
     if var + "_mean_ts" not in do:
         return False
     name = var + "_trend"
@@ -529,12 +529,12 @@ def rm_geo_stuff(d):
 
 
 def process_period_season_region(
-    d, source, period, season, var, region, geo_mean=False, weights=None
+    d, source, period, season, var, region, weights=None
 ):
     do = {".": copy.deepcopy(META)}
     set_attrs(do, period, season, var, region)
 
-    if not geo_mean:
+    if region is None:
         for k in ["x", "y", "lon", "lat"]:
             if k in do:
                 do[k] = d[k][0, :]
@@ -550,17 +550,17 @@ def process_period_season_region(
     do_write |= calc_period_stat("mean", d, do, var, period, season)
     if season == "ANN" and region is not None:
         do_write |= calc_annual_cycle(d, do, var, period)
-    if not geo_mean:
-        do_write |= calc_trend(d, do, var, period, season)
 
-    if not do_write:
-        return
-
-    if geo_mean:
+    if region is not None:
         calc_geo_mean(do, var + "_mean_ts", weights)
         calc_geo_mean(do, var + "_mean", weights)
         calc_geo_mean(do, var + "_ac", weights)
         rm_geo_stuff(do)
+
+    do_write |= calc_trend(d, do, var, period, season, region)
+
+    if not do_write:
+        return
 
     for k in ["x", "y", "lon", "lat"]:
         copy_var_attrs(d, do, k, k)
@@ -590,7 +590,6 @@ def process(
     output,
     var,
     region=None,
-    geo_mean=False,
     landsea=None,
     landsea_1x1deg=None,
 ):
@@ -609,7 +608,7 @@ def process(
     else:
         region_code = None
 
-    if geo_mean:
+    if region is not None:
         bounds = [lon1, lon2, lat1, lat2]
         if dims[1:] == ["y", "x"]:
             water = get_water(landsea, lon, lat)
@@ -635,7 +634,6 @@ def process(
                     season,
                     var,
                     region,
-                    geo_mean=geo_mean,
                     weights=weights,
                 )
                 if do is not None:
@@ -651,7 +649,7 @@ def main(type_, input_, source, output):
     landsea = ds.read(LANDSEA_MASK_FILE)
     landsea_1x1deg = ds.read(LANDSEA_MASK_FILE_1X1DEG)
 
-    with ProcessPoolExecutor() as ex:
+    with ProcessPoolExecutor(1) as ex:
         index = io.list_dataset(input_, ex=ex)
         futures = []
         if type_ == "period_season":
@@ -678,7 +676,6 @@ def main(type_, input_, source, output):
                             output,
                             var,
                             [region_code] + region_props,
-                            geo_mean=True,
                             landsea=landsea,
                             landsea_1x1deg=landsea_1x1deg,
                         )
