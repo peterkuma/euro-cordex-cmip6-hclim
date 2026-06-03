@@ -343,13 +343,13 @@ def plot_panel(
             im.cmap,
             im.norm,
         )
-    if with_labels:
-        plot_labels(labels, mask_ens)
     if with_axes:
-        n, m = values_abs.shape
+        n, m = values.shape
         plt.xticks(np.arange(m), regions)
         plt.yticks(np.arange(n), np.arange(1, n + 1))
         plt.title(season)
+    if with_labels:
+        plot_labels(labels, mask_ens)
 
 
 def read(input_, index, source, var, season, region, period):
@@ -556,6 +556,8 @@ def plot(type_, input_, index, output, var, sources, period):
             for j, region in enumerate(regions):
                 if type_ == "mean":
                     d = read(input_, index, source, var, season, region, period)
+                    if d is None:
+                        continue
                     mask[i] = True
                     values1[k, i, j] = d[name1]
                     values1_ts[k, i, j, :] = d[f"{name1}_ts"]
@@ -575,6 +577,8 @@ def plot(type_, input_, index, output, var, sources, period):
                     d2 = read(
                         input_, index, source, var, season, region, period[1]
                     )
+                    if d1 is None or d2 is None:
+                        continue
                     mask[i] = True
                     years1 = d1["year"]
                     years2 = d2["year"]
@@ -694,10 +698,10 @@ def plot(type_, input_, index, output, var, sources, period):
     panel_aspect = get_aspect(var)
 
     if ref is not None:
-        values_abs = values
-        values_abs[ii != ref] = np.nan
+        values_abs = values.copy()
+        values_abs[:, ii != ref] = np.nan
         values_rel = values.copy()
-        values_rel[ii == ref] = np.nan
+        values_rel[:, ii == ref] = np.nan
         log_abs = False
         log_rel = var == "pr"
     else:
@@ -711,9 +715,9 @@ def plot(type_, input_, index, output, var, sources, period):
         axs[k] = plt.subplot(gs[k if k < 3 else k + 1])
         plot_panel(
             values_abs[k],
-            pvalue[k],
-            robust_sign[k],
-            robust_variability[k],
+            pvalue[k] if type_ == "trend" else None,
+            None,
+            None,
             labels,
             mask_ens,
             regions,
@@ -730,9 +734,9 @@ def plot(type_, input_, index, output, var, sources, period):
         if values_rel is not None:
             plot_panel(
                 values_rel[k],
-                None,
-                None,
-                None,
+                pvalue[k],
+                robust_sign[k],
+                robust_variability[k],
                 labels,
                 mask_ens,
                 regions,
