@@ -78,13 +78,14 @@ calc_stats () {
 
 convert_png () {
 	local dir=$1
-	mkdir -p "$dir/png"
+	out=$dir/png
+	mkdir -p "$out"
 	for file in "$dir/"*.pdf; do
 		cmd \
 			convert \
 			-density 600 \
 			"$file" \
-			"$dir/png/$(basename "${file%.pdf}").png"
+			"$out/$(basename "${file%.pdf}").png"
 	done
 }
 
@@ -119,15 +120,17 @@ EOF
 	;;
 
 source_links)
-	mkdir -p input/sources
+	out=input/sources
+	mkdir -p "$out"
 	while read -r line; do
 		items=($line)
 		name=${items[0]}
-		mkdir -p "input/sources/$name"
+		out1=$out/$name
+		mkdir -p "$out1"
 		for path in ${items[@]:1}; do
 			for file in "$path"/*.nc; do
 				if [ -e "$file" ]; then
-					cmd ln -fs "$file" -t "input/sources/$name/"
+					cmd ln -fs "$file" -t "$out1/"
 				fi
 			done
 		done
@@ -135,21 +138,23 @@ source_links)
 	;;
 
 remap_landmask)
-	mkdir -p data/landmask
+	out=data/landmask
+	mkdir -p "$out"
 	cmd cdo \
 		remapbil,r360x180 \
 		input/landmask/sftlf_EUR-12_ERA5_evaluation_r1i1p1f1_HCLIMcom-SMHI_HCLIM43-ALADIN_v1-r1_fx.nc \
-	 	data/landmask/sftlf_EUR-12_ERA5_evaluation_r1i1p1f1_HCLIMcom-SMHI_HCLIM43-ALADIN_v1-r1_fx_1x1deg.nc
+		"$out/sftlf_EUR-12_ERA5_evaluation_r1i1p1f1_HCLIMcom-SMHI_HCLIM43-ALADIN_v1-r1_fx_1x1deg.nc"
 	;;
 
 remap_obs)
 	for obs in $(cat sources/list/obs); do
-		mkdir -p "data/1deg/$obs"
+		out=data/1deg/$obs
+		mkdir -p "$out"
 		for file in "input/sources/$obs"/*; do
 			cmd cdo \
 				remapbil,r360x180 \
 				"$file" \
-				"data/1deg/$obs/$(basename "$file")"
+				"$out/$(basename "$file")"
 		done
 	done
 	;;
@@ -196,19 +201,20 @@ calc_stats)
 	;;
 
 calc_indices)
-	mkdir -p data/indices/tmp
+	out=data/indices/tmp
+	mkdir -p "$out"
 	for list in "${LISTS_INDICES[@]}"; do
 		for source in $(cat "sources/list/$list"); do
 			for index in "${INDICES[@]}"; do
 				for file in "input/sources/$source"/*; do
-					echo cmd bin/climix -x "$index" "$file" data/indices/tmp
+					echo cmd bin/climix -x "$index" "$file" "$out"
 				done
 			done
 		done
 	done
 	run
-	for file in data/indices/tmp/*; do
-		echo mv "$file" data/indices/$(bin/get_source_name "data/indices/tmp/$file")
+	for file in "$out"/*; do
+		echo mv "$file" data/indices/$(bin/get_source_name "$out/$file")
 	done
 	;;
 
@@ -249,105 +255,117 @@ plot_map_diff)
 	;;
 
 plot_heatmap_mean)
-	mkdir -p plot/heatmap_mean
+	out=plot/heatmap_mean/$list
+	mkdir -p "$out"
 	for list in "${LISTS_HEATMAP_MEAN}"; do
 		cmd bin/plot_heatmap \
 			mean \
 			"data/stats/$list/period_season_region" \
 			$(cat sources/list/{obs,"$list"}) \
-			"plot/heatmap_mean/$list"
+			"$out"
 	done
 	;;
 
 plot_heatmap_trend)
-	mkdir -p plot/heatmap_trend
+	out=plot/heatmap_trend/$list
+	mkdir -p "$out"
 	for list in "${LISTS_HEATMAP_TREND}"; do
 		cmd bin/plot_heatmap \
 			trend \
 			"data/stats/$list/period_season_region" \
 			$(cat sources/list/{obs,"$list"}) \
-			"plot/heatmap_trend/$list"
+			"$out"
 	done
 	;;
 
 plot_heatmap_diff)
-	mkdir -p plot/heatmap_diff
+	out=plot/heatmap_diff/$list
+	mkdir -p "$out"
 	for list in "${LISTS_HEATMAP_DIFF}"; do
 		cmd bin/plot_heatmap \
 			diff \
 			"data/stats/$list/period_season_region" \
 			$(cat "sources/list/$list") \
-			"plot/heatmap_diff/$list"
+			"$out"
 	done
 	;;
 
 plot_boxplot)
-	mkdir -p plot/boxplot
+	out=plot/boxplot
+	mkdir -p "$out"
 	cmd bin/plot_boxplot \
 		data/stats/hclim_historical+ssp126/period_season_region \
 		$(cat sources/list/{obs,hclim_historical+ssp126}) \
 		1991 2020 \
-		plot/boxplot
-	mkdir -p plot/boxplot_relative
+		"$out"
+	out=plot/boxplot_relative
+	mkdir -p "$out"
 	cmd bin/plot_boxplot_relative \
 		data/stats/hclim_historical+ssp126/period_season_region \
 		$(cat sources/list/{obs,hclim_historical+ssp126}) \
 		1991 2020 \
-		plot/boxplot_relative
+		"$out"
 	;;
 
 plot_gcm_rcm_scatter)
-	mkdir -p plot
+	out=plot
+	mkdir -p "$out"
 	cmd bin/plot_gcm_rcm_scatter \
 		data/stats/{gcm_historical+ssp126,hclim_historical+ssp126}/period_season_region \
 		$(cat sources/list/hclim_historical+ssp126) \
 		1991 2020 \
-		plot/gcm_rcm_scatter.pdf
+		"$out/gcm_rcm_scatter.pdf"
 	;;
 
 calc_model_ranking)
-	mkdir -p data
+	out=data
+	mkdir -p "$out"
 	cmd bin/calc_model_ranking \
 		data/stats/hclim_historical+ssp126/period_season_region \
 		$(cat sources/list/hclim_historical+ssp126_ranking) \
 		1991 2020 \
-		data/model_ranking.nc
+		"$out/model_ranking.nc"
 	;;
 
 plot_model_ranking)
-	mkdir -p plot
-	cmd bin/plot_model_ranking data/model_ranking.nc plot/model_ranking.pdf
+	out=plot
+	mkdir -p "$out"
+	cmd bin/plot_model_ranking data/model_ranking.nc "$out/model_ranking.pdf"
 	;;
 
 plot_timeseries)
-	mkdir -p plot/timeseries
+	out=plot/timeseries
+	mkdir -p "$out"
 	cmd bin/plot_timeseries \
 		data/stats/hclim_historical+ssp370/period_season_region \
 		$(cat sources/list/hclim_historical+ssp370) \
 		1991 2020 \
 		1991 2100 \
 		2071 2100 \
-		plot/timeseries/hclim_historical+ssp370.pdf
+		"$out/hclim_historical+ssp370.pdf"
 	;;
 
 plot_annual_cycle)
-	mkdir -p plot
+	out=plot
+	mkdir -p "$out"
 	cmd bin/plot_annual_cycle \
 		data/stats/hclim_historical+ssp370/period_season_region \
 		$(cat sources/list/hclim_historical+ssp370) \
 		1991 2020 \
 		2071 2100 \
-		plot/annual_cycle.pdf
+		"$out/annual_cycle.pdf"
 	;;
 
 plot_gcm_rcm_tas)
+	out=plot
+	mkdir -p "$out"
 	cmd bin/plot_gcm_rcm_tas \
 		data/stats/gcm_historical+ssp370/period_season_region \
 		data/stats/hclim_historical+ssp370/period_season_region \
 		$(cat sources/list/hclim_ens_historical+ssp370) \
 		1991 2020 \
 		2071 2100 \
-		plot/gcm_rcm_tas.pdf
+		"$out/gcm_rcm_tas.pdf"
 	;;
 
 *)
