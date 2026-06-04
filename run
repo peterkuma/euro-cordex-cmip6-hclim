@@ -255,9 +255,9 @@ plot_map_diff)
 	;;
 
 plot_heatmap_mean)
-	out=plot/heatmap_mean/$list
-	mkdir -p "$out"
 	for list in "${LISTS_HEATMAP_MEAN}"; do
+		out=plot/heatmap_mean/$list
+		mkdir -p "$out"
 		cmd bin/plot_heatmap \
 			mean \
 			"data/stats/$list/period_season_region" \
@@ -267,9 +267,9 @@ plot_heatmap_mean)
 	;;
 
 plot_heatmap_trend)
-	out=plot/heatmap_trend/$list
-	mkdir -p "$out"
 	for list in "${LISTS_HEATMAP_TREND}"; do
+		out=plot/heatmap_trend/$list
+		mkdir -p "$out"
 		cmd bin/plot_heatmap \
 			trend \
 			"data/stats/$list/period_season_region" \
@@ -279,9 +279,9 @@ plot_heatmap_trend)
 	;;
 
 plot_heatmap_diff)
-	out=plot/heatmap_diff/$list
-	mkdir -p "$out"
 	for list in "${LISTS_HEATMAP_DIFF}"; do
+		out=plot/heatmap_diff/$list
+		mkdir -p "$out"
 		cmd bin/plot_heatmap \
 			diff \
 			"data/stats/$list/period_season_region" \
