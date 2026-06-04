@@ -12,16 +12,18 @@ Arguments:
   END1       End year reference.
   START2     Start year future.
   END2       End year future.
-  OUTPUT     Output plot (PDF).
+  OUTPUT     Output directory (PDF).
 """
 
-import sys
+import os
 import string
+import sys
+
 import ds_format as ds
-from lib import io, misc
-import matplotlib.pyplot as plt
 import matplotlib as mpl
+import matplotlib.pyplot as plt
 import numpy as np
+from lib import io, misc
 from matplotlib.gridspec import GridSpec
 from matplotlib.lines import Line2D
 from matplotlib.ticker import MaxNLocator
@@ -53,6 +55,14 @@ mpl.rc("grid", lw=0.1)
 
 
 INPUT_GCM_ECS_TCR = "input/gcm_ecs_tcr.csv"
+
+SEASONS = [
+    "ANN",
+    "MAM",
+    "JJA",
+    "SON",
+    "DJF",
+]
 
 REGIONS = [
     "BI",
@@ -86,13 +96,13 @@ MARKERS = [
 ]
 
 
-def read(input_, sources, region, start, end, index=None):
+def read(input_, sources, season, region, start, end, index=None):
     dd = []
     for source in sources:
         desc = misc.parse_source(source)
         desc.update(
             {
-                "season": "ANN",
+                "season": season,
                 "variable_id": "tas",
                 "region_code": region,
                 "start_year": start,
@@ -254,48 +264,65 @@ def main(input_gcm, input_rcm, sources, start1, end1, start2, end2, output):
     index_gcm = io.list_dataset(input_gcm)
     index_rcm = io.list_dataset(input_rcm)
 
-    plt.figure(figsize=(8, 8))
-    gs = GridSpec(2, 2, hspace=0.25, wspace=0.25)
+    for season in SEASONS:
+        plt.figure(figsize=(8, 8))
+        gs = GridSpec(2, 2, hspace=0.25, wspace=0.25)
+        for i, type_ in enumerate(["ECS", "TCR", "delta_T"]):
+            plt.subplot(gs[i])
+            for j, region in enumerate(REGIONS):
+                dd_rcm1 = read(
+                    input_rcm, sources, season, region, start1, end1, index_rcm
+                )
+                dd_rcm2 = read(
+                    input_rcm, sources, season, region, start2, end2, index_rcm
+                )
+                sources_gcm = get_gcm_sources(sources, dd_rcm1)
+                dd_gcm1 = read(
+                    input_gcm,
+                    sources_gcm,
+                    season,
+                    region,
+                    start1,
+                    end1,
+                    index_gcm,
+                )
+                dd_gcm2 = read(
+                    input_gcm,
+                    sources_gcm,
+                    season,
+                    region,
+                    start2,
+                    end2,
+                    index_gcm,
+                )
+                model_labels = [get_title(d) for d in dd_gcm1]
 
-    for i, type_ in enumerate(["ECS", "TCR", "delta_T"]):
-        plt.subplot(gs[i])
-        for j, region in enumerate(REGIONS):
-            dd_rcm1 = read(input_rcm, sources, region, start1, end1, index_rcm)
-            dd_rcm2 = read(input_rcm, sources, region, start2, end2, index_rcm)
-            sources_gcm = get_gcm_sources(sources, dd_rcm1)
-            dd_gcm1 = read(
-                input_gcm, sources_gcm, region, start1, end1, index_gcm
-            )
-            dd_gcm2 = read(
-                input_gcm, sources_gcm, region, start2, end2, index_gcm
-            )
-            model_labels = [get_title(d) for d in dd_gcm1]
+                models = get_models(dd_rcm1)
+                tcr = get_gcm_ecs("TCR", gcm_ecs_tcr, models)
+                o = np.argsort(tcr)
 
-            models = get_models(dd_rcm1)
-            tcr = get_gcm_ecs("TCR", gcm_ecs_tcr, models)
-            o = np.argsort(tcr)
-
-            plot_panel(
-                type_,
-                gcm_ecs_tcr,
-                np.array(dd_gcm1)[o],
-                np.array(dd_gcm2)[o],
-                np.array(dd_rcm1)[o],
-                np.array(dd_rcm2)[o],
-                color=COLORS[j],
+                plot_panel(
+                    type_,
+                    gcm_ecs_tcr,
+                    np.array(dd_gcm1)[o],
+                    np.array(dd_gcm2)[o],
+                    np.array(dd_rcm1)[o],
+                    np.array(dd_rcm2)[o],
+                    color=COLORS[j],
+                )
+            plt.text(
+                0.02,
+                0.98,
+                "(%s)" % string.ascii_lowercase[i],
+                va="top",
+                transform=plt.gca().transAxes,
+                weight="bold",
             )
-        plt.text(
-            0.02,
-            0.98,
-            "(%s)" % string.ascii_lowercase[i],
-            va="top",
-            transform=plt.gca().transAxes,
-            weight="bold",
-        )
-    plot_region_legend(REGIONS)
-    plot_model_legend(np.array(model_labels)[o])
-    plt.savefig(output, bbox_inches="tight")
-    print(f"-> {output}")
+        plot_region_legend(REGIONS)
+        plot_model_legend(np.array(model_labels)[o])
+        output_filename = os.path.join(output, f"{season}.pdf")
+        plt.savefig(output_filename, bbox_inches="tight")
+        print(f"-> {output_filename}")
 
 
 if __name__ == "__main__":

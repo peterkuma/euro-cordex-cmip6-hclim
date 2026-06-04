@@ -357,7 +357,7 @@ plot_annual_cycle)
 	;;
 
 plot_gcm_rcm_tas)
-	out=plot
+	out=plot/gcm_rcm_tas
 	mkdir -p "$out"
 	cmd bin/plot_gcm_rcm_tas \
 		data/stats/gcm_historical+ssp370/period_season_region \
@@ -365,7 +365,7 @@ plot_gcm_rcm_tas)
 		$(cat sources/list/hclim_ens_historical+ssp370) \
 		1991 2020 \
 		2071 2100 \
-		"$out/gcm_rcm_tas.pdf"
+		"$out"
 	;;
 
 *)
