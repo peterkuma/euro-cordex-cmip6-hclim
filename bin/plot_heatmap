@@ -50,6 +50,8 @@ mpl.rc("grid", color="k")
 mpl.rc("grid", alpha=0.2)
 mpl.rc("grid", lw=0.1)
 
+SIG_LEVEL = 0.05  # Statistical significance level
+
 VARS = [
     "pr",
     "psl",
@@ -333,7 +335,7 @@ def plot_panel(
     formatter = log_formatter(format_) if log else lambda x: format_ % x
     plot_values_text(values, formatter, cmap, im.norm)
     if pvalue is not None:
-        plot_hatching("x", pvalue >= 0.05, values, im.cmap, im.norm)
+        plot_hatching("x", pvalue >= SIG_LEVEL, values, im.cmap, im.norm)
     if robust_variability is not None and robust_sign is not None:
         plot_hatching("\\", ~robust_variability, values, im.cmap, im.norm)
         plot_hatching(
@@ -451,7 +453,7 @@ def init_figure(var, nsources, nregions, title):
     plt.subplots_adjust(left=0, right=1, bottom=0, top=1)
     gs = GridSpec(2, 3, hspace=hspace / fig_height, wspace=wspace / fig_width)
     plt.suptitle(title, y=((fig_height + 0.55) / fig_height), fontsize=16)
-    return gs
+    return gs, aspect
 
 
 def get_scenario(attrs):
@@ -487,7 +489,7 @@ def get_format(type_, var):
     return f"%.{precision}f"
 
 
-def get_aspect(var):
+def get_aspect(var, aspect):
     return 1 / aspect if var == "psl" else 1
 
 
@@ -694,8 +696,8 @@ def plot(type_, input_, index, output, var, sources, period):
     scenario = get_scenario(ds.attrs(d))
     title = get_title(type_, var_label, scenario, period)
     format_ = get_format(type_, var)
-    gs = init_figure(var, nsources, nregions, title)
-    panel_aspect = get_aspect(var)
+    gs, aspect = init_figure(var, nsources, nregions, title)
+    panel_aspect = get_aspect(var, aspect)
 
     if ref is not None:
         values_abs = values.copy()
