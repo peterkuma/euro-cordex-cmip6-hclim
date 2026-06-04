@@ -56,6 +56,8 @@ mpl.rc("grid", lw=0.1)
 mpl.rc("hatch", linewidth=0.05)
 mpl.rc("hatch", color="#000000a0")
 
+SIG_LEVEL = 0.05  # Statistical significance level
+
 # Only consider latitudes above this number when determining value limits.
 VLIM_CUTOFF_LAT = 37.4  # Exclude Africa
 
@@ -418,7 +420,7 @@ def plot_panel(
     if name + "_p" in d:
         plot_hatching(
             "x",
-            d[name + "_p"] >= 0.05,
+            d[name + "_p"] >= SIG_LEVEL,
             source_coordinates,
             lon,
             lat,
