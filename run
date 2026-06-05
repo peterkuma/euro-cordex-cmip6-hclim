@@ -34,12 +34,20 @@ LISTS_MAP_DIFF=(
 	hclim_historical+ssp370
 )
 
+LISTS_MAP_TREND=(
+	hclim_historical+ssp126
+)
+
 LISTS_HEATMAP_MEAN=(
 	hclim_historical+ssp126
 )
 
 LISTS_HEATMAP_DIFF=(
 	hclim_historical+ssp370
+)
+
+LISTS_HEATMAP_TREND=(
+	hclim_historical+ssp126
 )
 
 SUBTYPES=(
