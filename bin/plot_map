@@ -93,10 +93,9 @@ PERIOD_PAIRS = [
     # [[1995, 2014], [2081, 2100]],
 ]
 
-FIG_WIDTH = 7.3  # in
-TOP_MARGIN = 0.7  # in
-BOTTOM_MARGIN = 0.7  # in
-AXIS_HEIGHT = 1.8  # in
+MARGIN = 0.7  # in
+PANEL_WIDTH = 1.413  # in
+PANEL_HEIGHT = 1.8  # in
 
 LCC_PROJECTION = {
     "false_easting": 2925000,
@@ -164,6 +163,8 @@ def get_panel_title(d):
     title = misc.get_source_title(ds.attrs(d))
     if title == "HC/EC-Earth3-Veg":
         return title + "/" + ds.attr(d, "driving_variant_label")[:2]
+    elif title == "EC-Earth3-Veg":
+        return title + "/" + ds.attr(d, "variant_label")[:2]
     else:
         return title
 
@@ -217,18 +218,18 @@ def init_map(gs, crs_attrs, xaxis=True, yaxis=True):
 
 
 def plot_colorbar(var, bounds, cmap, label, units_pretty, relative, pos, fit):
-    figsize = plt.gcf().get_size_inches()
+    fw, fh = plt.gcf().get_size_inches()
     if pos == "top":
         loc = (
-            [0.335, 2 / figsize[1], 0.56, 0.1 / figsize[1]]
+            [0.335, 2.1 / fh, 0.56, 0.1 / fh]
             if fit
-            else [0.125, 0.32 / figsize[1], 0.77, 0.1 / figsize[1]]
+            else [0.125, 0.32 / fh, 0.77, 0.1 / fh]
         )
     elif pos == "bottom":
         loc = (
-            [0.335, 1.15 / figsize[1], 0.56, 0.1 / figsize[1]]
+            [0.335, 1.4 / fh, 0.56, 0.1 / fh]
             if fit
-            else [0.125, -0.28 / figsize[1], 0.77, 0.1 / figsize[1]]
+            else [0.125, -0.28 / fh, 0.77, 0.1 / fh]
         )
     else:
         raise ValueError(f"invalid pos {pos!r}")
@@ -261,7 +262,15 @@ def plot_colorbar(var, bounds, cmap, label, units_pretty, relative, pos, fit):
     cb.ax.tick_params(labelsize=8)
 
 
-def plot_legend(type_, fit=False):
+def plot_legend(type_, colorbar_fit, ncolorbars, npanels):
+    if colorbar_fit:
+        offset_x = MARGIN + PANEL_WIDTH * (npanels + 0.5 * (NCOLS - npanels))
+        offset_y = 2.2
+    else:
+        offset_x = MARGIN + 0.5 * PANEL_WIDTH * NCOLS
+        offset_y = 0.55
+    offset_y -= ncolorbars * 0.72
+
     noens = Rectangle((0, 0), 1, 1, facecolor=COLOR_NOENS, edgecolor="none")
     ens = Rectangle((0, 0), 1, 1, facecolor=COLOR_ENS, edgecolor="none")
     notrobust = (Line2D([0, 1], [1, 0], color="k"),)
@@ -285,17 +294,19 @@ def plot_legend(type_, fit=False):
     ]
 
     fw, fh = plt.gcf().get_size_inches()
-    bbox_to_anchor = [5 / fw, 1.8 / fh] if fit else [0.5, 0.35 / fh]
+    # offset_y = -0.61 * colorbar_size
+    # bbox_to_anchor = [5 / fw, 1.8 / fh] if colorbar_fit else [0.5, 0.35 / fh]
+    # bbox_to_anchor[1] += offset_y / fh
+    bbox_to_anchor = [offset_x / fw, offset_y / fh]
     plt.gcf().legend(
         handles,
         labels,
         handler_map={tuple: misc.SquareHandlerTuple(ndivide=None)},
         loc="center",
         bbox_to_anchor=bbox_to_anchor,
-        ncol=(1 if fit else 5),
         handletextpad=0.5,
         columnspacing=1,
-        fontsize=(9 if fit else 8),
+        fontsize=8,
     )
 
 
@@ -507,9 +518,10 @@ def is_gcm(d):
 
 
 def get_figsize(nrows, ncols):
-    w = FIG_WIDTH
-    h = nrows * AXIS_HEIGHT + BOTTOM_MARGIN + TOP_MARGIN
-    return [w, h]
+    return [
+        2 * MARGIN + NCOLS * PANEL_WIDTH,
+        2 * MARGIN + nrows * PANEL_HEIGHT,
+    ]
 
 
 def calc_pvalue(d, d_ref, name, paired=True):
@@ -656,13 +668,16 @@ def get_ens(dd):
 def init_figure(nrows, ncols):
     figsize = get_figsize(nrows, ncols)
     fig = plt.figure(figsize=figsize)
+    fw, fh = figsize
     gs = GridSpec(
         nrows,
         ncols,
         hspace=0,
         wspace=0,
-        bottom=(BOTTOM_MARGIN / figsize[1]),
-        top=(1 - TOP_MARGIN / figsize[1]),
+        bottom=(MARGIN / fh),
+        top=(1 - MARGIN / fh),
+        left=(MARGIN / fw),
+        right=((MARGIN + NCOLS * PANEL_WIDTH) / fw),
     )
     return fig, figsize, gs
 
@@ -807,7 +822,9 @@ def plot(type_, input_, sources, output, var, name, season, period, index):
         else:
             label2 = "Anomaly from %s" % misc.get_source_title(ds.attrs(d_ref))
         pos2 = "bottom"
-    colorbar_fit = len(dd) % ncols == 1
+    npanels = len(dd) % ncols
+    colorbar_fit = npanels == 1
+    ncolorbars = has_absolute + has_relative
     if has_absolute:
         plot_colorbar(
             var,
@@ -824,13 +841,13 @@ def plot(type_, input_, sources, output, var, name, season, period, index):
             var, bounds2, cmap2, label2, units_pretty2, True, pos2, colorbar_fit
         )
 
-    plot_legend(type_, not colorbar_fit)
+    plot_legend(type_, colorbar_fit, ncolorbars, npanels)
 
     title = get_title(
         type_, label1, season, period, get_scenario(ds.attrs(d_ref))
     )
     file = get_file_name(type_, var, season, period)
-    plt.suptitle(title, y=(1 - 0.7 * TOP_MARGIN / figsize[1]), fontsize=10)
+    plt.suptitle(title, y=(1 - 0.7 * MARGIN / figsize[1]), fontsize=10)
     filename = os.path.join(output, file)
     plt.savefig(filename, bbox_inches="tight")
     print("-> %s" % filename)
