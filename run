@@ -239,7 +239,7 @@ plot_map_mean)
 	;;
 
 plot_map_trend)
-	for list in "${LISTS_MAP_MEAN[@]}"; do
+	for list in "${LISTS_MAP_TREND[@]}"; do
 		out=plot/map_trend/$list
 		mkdir -p "$out"
 		cmd bin/plot_map \
