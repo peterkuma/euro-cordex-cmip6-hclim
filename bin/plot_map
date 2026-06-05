@@ -261,7 +261,7 @@ def plot_colorbar(var, bounds, cmap, label, units_pretty, relative, pos, fit):
     cb.ax.tick_params(labelsize=8)
 
 
-def plot_legend(fit=False, robustness=True):
+def plot_legend(type_, fit=False):
     noens = Rectangle((0, 0), 1, 1, facecolor=COLOR_NOENS, edgecolor="none")
     ens = Rectangle((0, 0), 1, 1, facecolor=COLOR_ENS, edgecolor="none")
     notrobust = (Line2D([0, 1], [1, 0], color="k"),)
@@ -276,11 +276,13 @@ def plot_legend(fit=False, robustness=True):
 
     handles = [noens, ens]
     labels = ["Not in ensemble", "Ensemble"]
-    if robustness:
+    if type_ == "diff":
         handles += [notrobust, conflicting]
         labels += ["No change or no robust signal", "Conflicting signals"]
     handles += [nonsig]
-    labels += ["Non-significant anomaly"]
+    labels += [
+        "Non-significant " + ("trend" if type_ == "trend" else "anomaly")
+    ]
 
     fw, fh = plt.gcf().get_size_inches()
     bbox_to_anchor = [5 / fw, 1.8 / fh] if fit else [0.5, 0.35 / fh]
@@ -821,7 +823,7 @@ def plot(type_, input_, sources, output, var, name, season, period, index):
             var, bounds2, cmap2, label2, units_pretty2, True, pos2, colorbar_fit
         )
 
-    plot_legend(not colorbar_fit, type_ == "diff")
+    plot_legend(type_, not colorbar_fit)
 
     title = get_title(
         type_, label1, season, period, get_scenario(ds.attrs(d_ref))
