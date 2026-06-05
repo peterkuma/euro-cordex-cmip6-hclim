@@ -274,7 +274,7 @@ def plot_colorbar(ax, var, vlim, cmap, label, rel, pos):
     cb.set_label(label)
 
 
-def plot_legend(robustness=True):
+def plot_legend(type_):
     ens = Rectangle((0, 0), 1, 1, facecolor=COLOR_ENS, edgecolor="none")
     notrobust = (Line2D([0, 1], [1, 0], color="k"),)
     conflicting = (
@@ -288,11 +288,13 @@ def plot_legend(robustness=True):
 
     handles = [ens]
     labels = ["Ensemble"]
-    if robustness:
+    if type_ == "diff":
         handles += [notrobust, conflicting]
         labels += ["No change or no robust signal", "Conflicting signals"]
     handles += [nonsig]
-    labels += ["Non-significant anomaly"]
+    labels += [
+        "Non-significant " + ("trend" if type_ == "trend" else "anomaly")
+    ]
 
     fw, fh = plt.gcf().get_size_inches()
     plt.gcf().legend(
@@ -769,7 +771,7 @@ def plot(type_, input_, index, output, var, sources, period):
     else:
         raise AssertionError()
 
-    plot_legend(type_ == "diff")
+    plot_legend(type_)
     plot_colorbar(
         axs[0],
         var,
