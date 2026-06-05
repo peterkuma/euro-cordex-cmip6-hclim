@@ -2,11 +2,7 @@
 set -e
 shopt -s nullglob
 
-njobs=$(nproc)
-
-task=$1
-
-export PARALLEL=--no-notice
+MAX_JOBS=32
 
 LISTS=(
 	hclim_historical+ssp126
@@ -58,6 +54,13 @@ SUBTYPES=(
 INDICES=(
 	sd
 )
+
+njobs=$(nproc)
+(( njobs > "$MAX_JOBS" )) && njobs=$MAX_JOBS
+
+task=$1
+
+export PARALLEL=--no-notice
 
 tmp=$(mktemp)
 tmp_final=$(mktemp)
