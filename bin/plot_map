@@ -735,7 +735,8 @@ def plot(type_, input_, sources, output, var, name, season, period, index):
             ds.attr(d, "units", units, var="z")
 
     ens_members = get_ens_members(dd)
-    dd_rel = [d for d in dd if d is not d_ref]
+    dd = [d_ref] + [d for d in dd if d is not d_ref]
+    dd_rel = dd[1:]
     # dd_rel_wo_ens = [d for d in dd if d is not d_ref and d is not d_ens]
     dd_ens = [d for d in dd if misc.get_source_name(ds.attrs(d)) in ens_members]
 
