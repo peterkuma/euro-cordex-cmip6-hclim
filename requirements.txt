@@ -1,6 +1,6 @@
 Cartopy==0.25.0
 cmcrameri==1.9
-ds_format==4.3.0
+ds_format==5.0.0
 matplotlib==3.10.8
 numpy==2.4.3
 pyproj==3.7.2
