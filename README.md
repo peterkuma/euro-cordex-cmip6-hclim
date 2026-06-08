@@ -14,7 +14,7 @@ reanalyses.
 
 - GNU Parallel >= 20220722 (tested with 20220722)
 - CDO >= 2.3.0 (tested with 2.3.0)
-- Python >= 3.9 (tested with 3.9.25)
+- Python >= 3.14.2 (tested with 3.14.2)
 - Python packages specified in `requirements.txt`
 
 To install the Python packages, it is recommended to use a Python virtual
