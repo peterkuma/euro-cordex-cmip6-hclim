@@ -127,6 +127,9 @@ Tasks:
   plot_timeseries       Plot time series (dep: calc_stats).
   plot_annual_cycle     Plot annual cycle (dep: calc_stats).
   plot_gcm_rcm_tas      Plot GCM. vs RCM. temperature change.
+  download_topo         Download topography.
+  remap_topo            Remap topography (dep: download_topo).
+  plot_domain_map       Plot domain map (dep: remap_topo).
 EOF
 	;;
 
@@ -377,6 +380,24 @@ plot_gcm_rcm_tas)
 		1991 2020 \
 		2071 2100 \
 		"$out"
+	;;
+
+download_topo)
+	wget -cO input/GMTED2010_mean_30arcsec.nc4 \
+		'https://zenodo.org/records/14537811/files/GMTED2010_mean_30arcsec.nc4?download=1'
+	;;
+
+remap_topo)
+	rm -f data/topo.nc
+	cmd cdo \
+		remapcon,r2880x1440 \
+		-sellonlatbox,-60,80,10,80 \
+		input/GMTED2010_mean_30arcsec.nc4 \
+		data/topo.nc
+	;;
+
+plot_domain_map)
+	cmd bin/plot_domain_map data/topo.nc plot/domain_map.pdf
 	;;
 
 *)

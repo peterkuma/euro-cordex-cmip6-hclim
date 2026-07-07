@@ -1,0 +1,210 @@
+#!/usr/bin/env python3
+"""
+Usage: bin/plot_domain_map INPUT OUTPUT
+
+Arguments:
+
+  INPUT   Input file with topography (NetCDF).
+  OUTPUT  Output directory (PDF).
+"""
+
+import signal
+
+signal.signal(signal.SIGINT, signal.SIG_DFL)
+
+import sys
+
+import cartopy.crs as ccrs
+import cartopy.feature as cfeature
+import cartopy.util
+import cartopy.util as cutil
+import ds_format as ds
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
+import numpy as np
+from lib import misc
+from mpl_toolkits.axes_grid1 import make_axes_locatable
+
+misc.load_mpl_fonts()
+
+mpl.rc("font", family="Open Sans")
+mpl.rc("axes", linewidth=0.3)
+mpl.rc("axes", grid=True)
+mpl.rc("lines", linewidth=1.2)
+mpl.rc("xtick.major", width=0.3)
+mpl.rc("ytick.major", width=0.3)
+mpl.rc("legend", framealpha=1)
+mpl.rc("legend", facecolor="none")
+mpl.rc("legend", edgecolor="none")
+mpl.rc("legend", fancybox=False)
+mpl.rc("legend", fontsize=9)
+mpl.rc("grid", color="w")
+mpl.rc("grid", alpha=0.2)
+mpl.rc("grid", lw=0.1)
+mpl.rc("hatch", linewidth=0.05)
+mpl.rc("hatch", color="#000000a0")
+
+LCC_PROJECTION = {
+    "false_easting": 2925000,
+    "false_northing": 2925000,
+    "central_latitude": 49.5,
+    "central_longitude": 10.5,
+    "standard_parallels": [49.5],
+}
+
+
+def make_dense(x, npoints=100):
+    n = len(x)
+    y = []
+    for i in range(n - 1):
+        y += list(np.linspace(x[i], x[i + 1], npoints))
+    return np.array(y)
+
+
+def plot_domain():
+    rotated_crs = ccrs.RotatedPole(pole_longitude=198.0, pole_latitude=39.25)
+    dx, dy = 0.44, 0.44
+    nx, ny = 106, 103
+    crs = ccrs.PlateCarree()
+    X = crs.transform_points(rotated_crs, np.array([331.79]), np.array([21.67]))
+    tlc = [-28.21, 21.67]
+    trc = [tlc[0] + dx * nx, tlc[1]]
+    blc = [tlc[0], tlc[1] - dy * ny]
+    brc = [trc[0], trc[1] - dy * ny]
+    lon = [tlc[0], trc[0], brc[0], blc[0], tlc[0]]
+    lat = [tlc[1], trc[1], brc[1], blc[1], tlc[1]]
+    lon_dense, lat_dense = make_dense(lon), make_dense(lat)
+    (lines,) = plt.plot(
+        lon_dense,
+        lat_dense,
+        color="red",
+        lw=1.2,
+        transform=rotated_crs,
+        label="EURO-CORDEX domain",
+    )
+    return lines
+
+
+def plot_prudence_regions(map_crs):
+    crs = ccrs.PlateCarree()
+    for abbrev, r in misc.REGIONS.items():
+        name = r[0]
+        lon1, lon2, lat1, lat2 = r[1:]
+        lon = np.array([lon1, lon2, lon2, lon1, lon1])
+        lat = np.array([lat1, lat1, lat2, lat2, lat1])
+        points = map_crs.transform_points(crs, lon, lat)
+        x = points[:, 0]
+        y = points[:, 1]
+        lon_dense, lat_dense = make_dense(lon), make_dense(lat)
+        (lines,) = plt.plot(
+            lon_dense,
+            lat_dense,
+            lw=0.7,
+            transform=crs,
+            color="w",
+            label="PRUDENCE regions",
+        )
+        plt.text(
+            0.5 * (x[0] + x[1]),
+            0.5 * (y[0] + y[2]),
+            abbrev,
+            va="center",
+            ha="center",
+            color="w",
+            fontsize=10,
+        )
+    return lines
+
+
+def main(input_, output):
+    fig = plt.figure(figsize=(5, 5))
+    # d = ds.read(input_, between={"lon": [-45, 75], "lat": [10, 80]})
+    d = ds.read(input_)
+
+    crs = ccrs.LambertConformal(**LCC_PROJECTION)
+    data_crs = ccrs.PlateCarree()
+
+    ax = plt.subplot(projection=crs)
+    ax.set_extent([-17, 37, 23, 76], crs=ccrs.PlateCarree())
+    ax.coastlines("50m", linewidth=0.4, alpha=0.9)
+    ax.add_feature(
+        cfeature.BORDERS, linewidth=0.3, edgecolor="black", alpha=0.8
+    )
+    ocean = cfeature.NaturalEarthFeature(
+        "physical", "ocean", "50m", edgecolor="none", facecolor="k"
+    )
+    ax.add_feature(ocean)
+
+    gl = ax.gridlines(
+        draw_labels=True,
+        linewidth=0.7,
+        alpha=0.1,
+        color="w",
+        x_inline=False,
+        y_inline=False,
+        rotate_labels=False,
+    )
+    gl.xlocator = mticker.FixedLocator(np.arange(-180, 180 + 10, 10))
+    gl.ylocator = mticker.FixedLocator(np.arange(-90, 90 + 5, 5))
+    gl.top_labels = False
+    gl.right_labels = False
+    gl.xlabel_style = {"size": 8}
+    gl.ylabel_style = {"size": 8}
+
+    cdata, clon, clat = cutil.add_cyclic(
+        d["surface_altitude"], d["lon"], d["lat"]
+    )
+
+    vlim = [0, 2500]
+
+    locator = mpl.ticker.MaxNLocator(nbins=10, steps=[1, 2, 2.5, 5, 10])
+    bounds = locator.tick_values(vlim[0], vlim[1])
+
+    plt.imshow(
+        cdata,
+        extent=[clon[0], clon[-1], clat[0], clat[-1]],
+        cmap="viridis",
+        origin="lower",
+        transform=data_crs,
+        vmin=bounds[0],
+        vmax=bounds[-1],
+        label="EURO-CORDEX domain",
+        zorder=1,
+        interpolation="none",
+    )
+
+    domain = plot_domain()
+    regions = plot_prudence_regions(crs)
+
+    leg = plt.legend(
+        handles=[domain, regions],
+        loc="upper center",
+        bbox_to_anchor=(0.5, 1.01),
+        ncol=2,
+        fontsize=8,
+        frameon=True,
+        facecolor="k",
+        framealpha=0.5,
+    )
+    for text in leg.get_texts():
+        text.set_color("w")
+
+    pos = ax.get_position()
+    cax = fig.add_axes([pos.x1 + 0.03, pos.y0, 0.025, pos.height])
+    cb = plt.colorbar(cax=cax, label="Elevation (m)", extend="both")
+    cb.ax.set_yticks(bounds)
+
+    plt.savefig(output, bbox_inches="tight")
+    print("-> %s" % output)
+
+
+if __name__ == "__main__":
+    if len(sys.argv) < 3:
+        sys.stderr.write(sys.modules[__name__].__doc__)
+        sys.exit(1)
+
+    input_ = sys.argv[1]
+    output = sys.argv[2]
+
+    main(input_, output)
