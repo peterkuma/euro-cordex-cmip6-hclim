@@ -14,6 +14,7 @@ reanalyses.
 
 - GNU Parallel >= 20220722 (tested with 20220722)
 - CDO >= 2.3.0 (tested with 2.3.0)
+- wget (tested with 1.21.1)
 - Python >= 3.14.2 (tested with 3.14.2)
 - Python packages specified in `requirements.txt`
 
@@ -52,7 +53,7 @@ remap_landmask        Remap land mask to a 1x1 degree grid for GCM calculations.
 remap_obs             Remap observatiosn to a 1x1 degree grid for GCM calculations.
 calc_ensembles        Calculate model ensembles.
 calc_stats            Calculate statistics (dep: source_links, remap_landmask, remap_obs, ensemble).
-calc_indices          Calculate climate indices.
+calc_clim_indices     Calculate climate indices.
 calc_model_ranking    Calculate model ranking (dep: calc_stats).
 plot_map_mean         Plot maps for means (dep: calc_stats).
 plot_map_diff         Plot maps for differences between time periods (dep: calc_stats).
