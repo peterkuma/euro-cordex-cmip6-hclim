@@ -389,22 +389,53 @@ calc_stats)
 	done
 	;;
 
+calc_clim_indices)
+	CPUS_TO_JOBS_FACTOR=4
+	for list in "${LISTS_CLIM_INDICES[@]}"; do
+		for source in $(cat "sources/list/$list"); do
+			dir=data/sources/$source
+			for f in "$dir/day/tasmax/"*.nc; do
+				outdir=data/clim_indices/$source/yr/su
+				name=$(basename "$f")
+				out="$outdir/su_${name#*_}"
+				mkdir -p "$outdir"
+				cmd bin/calc_clim_index su "$f" "$out"
+			done
+			for f in "$dir/day/tas/"*.nc; do
+				outdir=data/clim_indices/$source/yr/gsstart
+				name=$(basename "$f")
+				out="$outdir/gsstart_${name#*_}"
+				mkdir -p "$outdir"
+				cmd bin/calc_clim_index gsstart "$f" "$out"
+			done
+		done
+	done
+	run
+	for file in data/clim_indices/*/*/*/*.nc; do
+		path=${file#data/clim_indices/}
+		dir=$(dirname "$path")
+		out=data/sources/$dir
+		mkdir -p "$out"
+		ln -sf "../../../../clim_indices/$path" -t "$out/"
+	done
+	;;
+
+calc_model_ranking)
+	out=data
+	mkdir -p "$out"
+	cmd bin/calc_model_ranking \
+		data/stats/hclim_historical+ssp126/period_season_region \
+		$(cat sources/list/hclim_historical+ssp126_ranking) \
+		1991 2020 \
+		"$out/model_ranking.nc"
+	;;
+
 plot_map_mean)
 	for list in "${LISTS_MAP_MEAN[@]}"; do
 		plot_map \
 			mean \
 			"data/stats/$list/period_season" \
 			"plot/map_mean/$list" \
-			$(cat sources/list/{obs,"$list"})
-	done
-	;;
-
-plot_map_trend)
-	for list in "${LISTS_MAP_TREND[@]}"; do
-		plot_map \
-			trend \
-			"data/stats/$list/period_season" \
-			"plot/map_trend/$list" \
 			$(cat sources/list/{obs,"$list"})
 	done
 	;;
@@ -416,6 +447,16 @@ plot_map_diff)
 			"data/stats/$list/period_season" \
 			"plot/map_diff/$list" \
 			$(cat "sources/list/$list")
+	done
+	;;
+
+plot_map_trend)
+	for list in "${LISTS_MAP_TREND[@]}"; do
+		plot_map \
+			trend \
+			"data/stats/$list/period_season" \
+			"plot/map_trend/$list" \
+			$(cat sources/list/{obs,"$list"})
 	done
 	;;
 
@@ -431,18 +472,6 @@ plot_heatmap_mean)
 	done
 	;;
 
-plot_heatmap_trend)
-	for list in "${LISTS_HEATMAP_TREND}"; do
-		out=plot/heatmap_trend/$list
-		mkdir -p "$out"
-		cmd bin/plot_heatmap \
-			trend \
-			"data/stats/$list/period_season_region" \
-			$(cat sources/list/{obs,"$list"}) \
-			"$out"
-	done
-	;;
-
 plot_heatmap_diff)
 	for list in "${LISTS_HEATMAP_DIFF}"; do
 		out=plot/heatmap_diff/$list
@@ -451,6 +480,18 @@ plot_heatmap_diff)
 			diff \
 			"data/stats/$list/period_season_region" \
 			$(cat "sources/list/$list") \
+			"$out"
+	done
+	;;
+
+plot_heatmap_trend)
+	for list in "${LISTS_HEATMAP_TREND}"; do
+		out=plot/heatmap_trend/$list
+		mkdir -p "$out"
+		cmd bin/plot_heatmap \
+			trend \
+			"data/stats/$list/period_season_region" \
+			$(cat sources/list/{obs,"$list"}) \
 			"$out"
 	done
 	;;
@@ -480,16 +521,6 @@ plot_gcm_rcm_scatter)
 		$(cat sources/list/hclim_historical+ssp126) \
 		1991 2020 \
 		"$out/gcm_rcm_scatter.pdf"
-	;;
-
-calc_model_ranking)
-	out=data
-	mkdir -p "$out"
-	cmd bin/calc_model_ranking \
-		data/stats/hclim_historical+ssp126/period_season_region \
-		$(cat sources/list/hclim_historical+ssp126_ranking) \
-		1991 2020 \
-		"$out/model_ranking.nc"
 	;;
 
 plot_model_ranking)
@@ -549,37 +580,6 @@ remap_topo)
 
 plot_domain_map)
 	cmd bin/plot_domain_map data/topo.nc plot/domain_map.pdf
-	;;
-
-calc_clim_indices)
-	CPUS_TO_JOBS_FACTOR=4
-	for list in "${LISTS_CLIM_INDICES[@]}"; do
-		for source in $(cat "sources/list/$list"); do
-			dir=data/sources/$source
-			for f in "$dir/day/tasmax/"*.nc; do
-				outdir=data/clim_indices/$source/yr/su
-				name=$(basename "$f")
-				out="$outdir/su_${name#*_}"
-				mkdir -p "$outdir"
-				cmd bin/calc_clim_index su "$f" "$out"
-			done
-			for f in "$dir/day/tas/"*.nc; do
-				outdir=data/clim_indices/$source/yr/gsstart
-				name=$(basename "$f")
-				out="$outdir/gsstart_${name#*_}"
-				mkdir -p "$outdir"
-				cmd bin/calc_clim_index gsstart "$f" "$out"
-			done
-		done
-	done
-	run
-	for file in data/clim_indices/*/*/*/*.nc; do
-		path=${file#data/clim_indices/}
-		dir=$(dirname "$path")
-		out=data/sources/$dir
-		mkdir -p "$out"
-		ln -sf "../../../../clim_indices/$path" -t "$out/"
-	done
 	;;
 
 archive)
