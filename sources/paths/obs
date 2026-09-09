@@ -1,0 +1,4 @@
+EUR-12lcc_OBS_obs_r1i1p1f1_ECAD_EOBS30-0e_v1-r1 /home/rossby/imports/obs/EOBS/EOBS30-0e/remap/EUR-12lcc/$freq
+EUR-12lcc_REAN_rean_r1i1p1f1_ECMWF_ERA5_v1-r1 /home/rossby/imports/obs/ECMWF/ERA5/remap/EUR-12lcc/$freq
+EUR-12lcc_REAN_rean_r1i1p1f1_ECMWF_CERRA_v1-r1 /home/rossby/imports/obs/CERRA/CERRA_SMHI/remap/EUR-12lcc/$freq
+EUR-12lcc_REAN_rean_r1i1p1f1_ECMWF_CERRA-Land_v1-r1 /home/rossby/imports/obs/CERRA-Land/CERRA_SMHI/remap/EUR-12lcc/$freq

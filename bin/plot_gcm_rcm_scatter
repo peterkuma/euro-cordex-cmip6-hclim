@@ -14,6 +14,7 @@ Arguments:
 import signal
 
 signal.signal(signal.SIGINT, signal.SIG_DFL)
+import string
 import sys
 from concurrent.futures import ProcessPoolExecutor
 
@@ -119,7 +120,7 @@ def source_letter(attrs):
 def get_title(d):
     title = misc.get_source_title(ds.attrs(d))
     if title == "EC-Earth3-Veg":
-        return title + "/" + ds.attr(d, "variant_label")[:2]
+        return title + "-" + ds.attr(d, "variant_label")[:2]
     else:
         return title
 
@@ -308,6 +309,7 @@ def plot_panel(
     end,
     index_gcm,
     index_rcm,
+    k,
     xlabel=True,
     ylabel=True,
     legend=False,
@@ -361,7 +363,7 @@ def plot_panel(
     plt.text(
         0.5,
         1.03,
-        region,
+        "(%s) %s" % (string.ascii_lowercase[k], misc.REGIONS[region][0]),
         ha="center",
         fontweight="bold",
         transform=plt.gca().transAxes,
@@ -441,6 +443,7 @@ if __name__ == "__main__":
         wspace=0.2,
     )
 
+    k = 0
     for i, season in enumerate(SEASONS):
         for j, region in enumerate(REGIONS):
             row = j // 2 + 1
@@ -457,12 +460,12 @@ if __name__ == "__main__":
                 end,
                 index_gcm,
                 index_rcm,
+                k,
                 xlabel=(row == nrows and col == 1),
                 ylabel=(row == nrows and col == 1),
                 legend=(row == 1 and col == 1),
             )
-            # break
-        # break
+            k += 1
 
     mar = plt.gcf().subplotpars
     for i, season in enumerate(SEASONS):

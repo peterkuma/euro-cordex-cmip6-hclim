@@ -18,6 +18,7 @@ from numpy._typing import _128Bit
 signal.signal(signal.SIGINT, signal.SIG_DFL)
 
 import os
+import string
 import sys
 import warnings
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -82,7 +83,7 @@ PERIOD_PAIRS = [
     # [[1995, 2014], [2081, 2100]],
 ]
 
-COLOR_ENS = "#f5f592"
+COLOR_ENS = "#71f4ff"
 
 CMAP_SEQ = plt.get_cmap("viridis")
 CMAP_SEQ.set_under("#ae00e3")
@@ -95,8 +96,13 @@ CMAP_DIV.set_over("#d80011")
 
 def get_panel_title(d):
     title = misc.get_source_title(ds.attrs(d))
-    if title == "HC/EC-Earth3-Veg":
-        return title + "/" + ds.attr(d, "driving_variant_label")[:2]
+    if title == "HC(EC-Earth3-Veg)":
+        return (
+            title[:-1]
+            + "-"
+            + ds.attr(d, "driving_variant_label")[:2]
+            + title[-1]
+        )
     else:
         return title
 
@@ -315,6 +321,7 @@ def log_formatter(format_):
 
 
 def plot_panel(
+    i,
     values,
     pvalue,
     robust_sign,
@@ -351,7 +358,8 @@ def plot_panel(
         n, m = values.shape
         plt.xticks(np.arange(m), regions)
         plt.yticks(np.arange(n), np.arange(1, n + 1))
-        plt.title(season)
+        letter = string.ascii_lowercase[i]
+        plt.title(("(%s) " % letter) + season)
     if with_labels:
         plot_labels(labels, mask_ens)
 
@@ -429,7 +437,7 @@ def get_ref(type_, var, labels):
         if var == "psl":
             search = ["ERA5", "ENS"]
         else:
-            search = ["OBS", "ENS"]
+            search = ["E-OBS", "ENS"]
         for what in search:
             try:
                 i = labels.index(what)
@@ -454,7 +462,7 @@ def init_figure(var, nsources, nregions, title):
     plt.figure(figsize=(fig_width, fig_height))
     plt.subplots_adjust(left=0, right=1, bottom=0, top=1)
     gs = GridSpec(2, 3, hspace=hspace / fig_height, wspace=wspace / fig_width)
-    plt.suptitle(title, y=((fig_height + 0.55) / fig_height), fontsize=16)
+    plt.suptitle(title, y=((fig_height + 0.55) / fig_height), fontsize=15)
     return gs, aspect
 
 
@@ -718,6 +726,7 @@ def plot(type_, input_, index, output, var, sources, period):
     for k, season in enumerate(SEASONS):
         axs[k] = plt.subplot(gs[k if k < 3 else k + 1])
         plot_panel(
+            k,
             values_abs[k],
             pvalue[k] if type_ == "trend" else None,
             None,
@@ -737,6 +746,7 @@ def plot(type_, input_, index, output, var, sources, period):
         )
         if values_rel is not None:
             plot_panel(
+                k,
                 values_rel[k],
                 pvalue[k],
                 robust_sign[k],
@@ -771,18 +781,41 @@ def plot(type_, input_, index, output, var, sources, period):
     else:
         raise AssertionError()
 
+    def range_s(a, b):
+        return "%d" if a == b else "%d–%d" % (a + 1, b + 1)
+
+    if ref is not None:
+        letters_abs = "(%d.)" % (ref + 1)
+        letters_rel = (
+            "(2–%d.)" % nsources
+            if ref == 0
+            else "(%s., %s.)"
+            % (range_s(0, ref - 1), range_s(ref + 1, nsources - 1))
+        )
+    else:
+        letters_abs = ""
+        letters_rel = ""
+
     plot_legend(type_)
     plot_colorbar(
         axs[0],
         var,
         vlim_abs,
         cmap_abs,
-        label_abs,
+        letters_abs + " " + label_abs,
         False,
         "center" if not rel else "left",
     )
     if rel:
-        plot_colorbar(axs[0], var, vlim_rel, cmap_rel, label_rel, True, "right")
+        plot_colorbar(
+            axs[0],
+            var,
+            vlim_rel,
+            cmap_rel,
+            letters_rel + " " + label_rel,
+            True,
+            "right",
+        )
 
     output_filename = get_output_filename(type_, output, var, period)
     plt.savefig(output_filename, bbox_inches="tight")

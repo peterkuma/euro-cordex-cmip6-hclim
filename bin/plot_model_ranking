@@ -14,6 +14,7 @@ import signal
 signal.signal(signal.SIGINT, signal.SIG_DFL)
 
 import os
+import string
 import sys
 
 import ds_format as ds
@@ -53,6 +54,10 @@ VARIABLES = {
 }
 
 
+def get_title(k, title):
+    return "(%s) %s" % (string.ascii_lowercase[k], title)
+
+
 def plot(sources, ranks, title, color):
     mask = ~np.isnan(ranks)
     sources = sources[mask]
@@ -68,7 +73,7 @@ def plot(sources, ranks, title, color):
     for spine in plt.gca().spines.values():
         spine.set_visible(False)
     plt.tick_params(axis="y", which="both", length=0)
-    plt.title(title)
+    plt.title(title, loc="left")
     plt.grid(axis="x")
     plt.gca().set_axisbelow(True)
     for label in plt.gca().get_yticklabels():
@@ -97,19 +102,26 @@ if __name__ == "__main__":
 
     k = 0
     plt.subplot(gs[k])
+    plot(d["source"], d["rank_total"], get_title(k, "Total"), COLORS[0])
     k += 1
-
-    plot(d["source"], d["rank_total"], "Total", COLORS[0])
 
     for i, var in enumerate(d["var"]):
         plt.subplot(gs[k])
-        plot(d["source"], d["rank_var"][i], VARIABLES[var], COLORS[1])
+        plot(
+            d["source"],
+            d["rank_var"][i],
+            get_title(k, VARIABLES[var]),
+            COLORS[1],
+        )
         k += 1
 
     for i, region in enumerate(d["region"]):
         plt.subplot(gs[k])
         plot(
-            d["source"], d["rank_region"][i], misc.REGIONS[region][0], COLORS[2]
+            d["source"],
+            d["rank_region"][i],
+            get_title(k, misc.REGIONS[region][0]),
+            COLORS[2],
         )
         k += 1
 

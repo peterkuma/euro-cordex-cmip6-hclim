@@ -1,0 +1,132 @@
+#!/usr/bin/env python3
+"""Calculate a climate index.
+
+Usage: bin/calc_clim_index VAR INPUT... OUTPUT
+
+Arguments:
+
+  VAR     Variable name. One of: "gsstart" or "su".
+  INPUT   Input file (NetCDF).
+  OUTPUT  Output file (NetCDF).
+"""
+
+import sys
+import warnings
+
+import aquarius_time as aq
+import ds_format as ds
+import numpy as np
+
+INPUT_VARS = {"gsstart": ["tas"], "su": ["tasmax"]}
+
+ATTRS = {
+    "gsstart": {
+        "long_name": "start of the growing season",
+        "units": "day",
+    },
+    "su": {
+        "long_name": "number of summer days",
+        "units": "day",
+    },
+}
+
+
+def copy(d1, d2, vars):
+    for var in vars:
+        ds.var(d2, var, ds.var(d1, var))
+        ds.meta(d2, var, ds.meta(d1, var))
+
+
+def per_yr(d, var, func):
+    date = aq.to_date(d["time"])
+    year = date[1]
+    years = np.array(sorted(set(year)))
+    n = len(years)
+    x = np.full([n] + list(d[var].shape[1:]), np.nan, float)
+    for i, y in enumerate(years):
+        mask = year == y
+        start = aq.from_date([1, y])
+        end = aq.from_date([1, y + 1])
+        ndays = round(end - start)
+        if np.sum(mask) != ndays:
+            warnings.warn(
+                "%s: year %d is incomplete - ignoring" % (d["filenames"], y)
+            )
+            continue
+        x[i] = func(d, mask)
+    dims = ds.dims(d, var)
+    time1 = aq.from_date([np.ones(n), years])
+    time2 = aq.from_date([np.ones(n), years + 1])
+    time = 0.5 * (time1 + time2)
+    time_bnds = np.column_stack([time1, time2])
+    return x, time, time_bnds, dims
+
+
+def calc_gsstart(d):
+    def func2(y):
+        i = np.where(np.convolve(y, np.ones(6, int), "valid") == 6)[0]
+        return float(i[0]) if i.size > 0 else np.nan
+
+    def func(d, mask):
+        tas = d["tas"][mask]
+        x = tas > 273.15 + 5
+        return np.apply_along_axis(func2, axis=0, arr=x)
+
+    return per_yr(d, "tas", func)
+
+
+def calc_su(d):
+    def func(d, mask):
+        return np.sum(d["tasmax"][mask] > 273.15 + 25, axis=0)
+
+    return per_yr(d, "tasmax", func)
+
+
+if __name__ == "__main__":
+    if len(sys.argv) < 4:
+        sys.stderr.write(sys.modules[__name__].__doc__)
+        sys.exit(1)
+
+    var = sys.argv[1]
+    input_ = sys.argv[2:-1]
+    output = sys.argv[-1]
+
+    d = {}
+    for filename in input_:
+        d1 = ds.read(filename, jd=True)
+        ds.attrs(d, None, ds.attrs(d1))
+        copy(d1, d, ["time", "time_bnds", "x", "y", "lon", "lat", "crs"])
+        for input_var in INPUT_VARS[var]:
+            if input_var in d1:
+                d[input_var] = d1[input_var]
+                d["."][input_var] = d1["."][input_var]
+
+    d["filenames"] = input_
+
+    do = {}
+    ds.attrs(do, None, ds.attrs(d))
+
+    if var == "gsstart":
+        data, time, time_bnds, dims = calc_gsstart(d)
+
+    if var == "su":
+        data, time, time_bnds, dims = calc_su(d)
+
+    ds.var(do, "time", time)
+    ds.meta(do, "time", ds.meta(d, "time"))
+    ds.var(do, "time_bnds", time_bnds)
+    ds.meta(do, "time_bnds", ds.meta(d, "time_bnds"))
+    copy(d, do, ["x", "y", "lon", "lat", "height", "crs"])
+    ds.var(do, var, data)
+    ds.dims(do, var, dims)
+    ds.attrs(do, var, ATTRS[var])
+    ds.attr(do, "variable_id", var)
+    ds.attr(do, "frequency", "yr")
+
+    ds.write(
+        output,
+        do,
+        time_units="days since 1950-01-01 00:00 UTC",
+        calendar="standard",
+    )
+    print("-> %s" % output)

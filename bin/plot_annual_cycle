@@ -14,15 +14,17 @@ Arguments:
   OUTPUT        Output plot.
 """
 
+import string
 import sys
+
+import ds_format as ds
+import matplotlib as mpl
+import matplotlib.pyplot as plt
 import numpy as np
 from lib import io, misc
-import matplotlib as mpl
 from matplotlib.gridspec import GridSpec
-import matplotlib.pyplot as plt
-from matplotlib.ticker import MaxNLocator
 from matplotlib.lines import Line2D
-import ds_format as ds
+from matplotlib.ticker import MaxNLocator
 
 misc.load_mpl_fonts()
 
@@ -108,7 +110,7 @@ def read(input_, var, region, sources, period, index=None):
     return dd
 
 
-def plot(
+def plot_panel(
     dd_ref,
     dd_future,
     var,
@@ -255,7 +257,8 @@ def main(input_, sources, period_ref, period_future, output):
         col = i % ncols
         plt.subplot(gs[i])
         ax = plt.gca()
-        plt.title(misc.REGIONS[region][0], fontsize=10, fontweight="bold")
+        title = ("(%s) " % string.ascii_lowercase[i]) + misc.REGIONS[region][0]
+        plt.title(title, fontsize=10, fontweight="bold")
         for side in range(len(VARS)):
             if side == 1:
                 twinx(ax, side)
@@ -287,9 +290,9 @@ def main(input_, sources, period_ref, period_future, output):
                         color=COLORS[var],
                     )
                     if plot_type == "anomaly":
-                        plot(dd_ref, dd_future, var, region, **opts)
+                        plot_panel(dd_ref, dd_future, var, region, **opts)
                     else:
-                        plot(dd_ref, None, var, region, **opts)
+                        plot_panel(dd_ref, None, var, region, **opts)
                 expand_yaxis(
                     ax, "bottom" if plot_type == "anomaly" else "top", side
                 )

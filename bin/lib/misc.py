@@ -114,11 +114,13 @@ def get_source_title(attrs):
     did = attrs.get("driving_source_id")
     if did == "REAN" or did is None:
         return sid
-    elif did in ["OBS", "ENS"]:
+    elif did == "OBS":
+        return "E-OBS"
+    elif did == "ENS":
         return did
     else:
         prefix = SOURCE_PREFIX.get(sid, sid)
-        return prefix + "/" + did
+        return prefix + "(" + did + ")"
 
 
 def get_pretty_units(x):
@@ -128,11 +130,12 @@ def get_pretty_units(x):
 
 def get_pretty_var_label(long_name):
     return (
-        long_name.capitalize()
+        long_name.replace("sea level", "sea-level")
         .replace(" monthly mean", "")
         .replace("minimum", "min.")
         .replace("maximum", "max.")
         .replace("temperature", "temp.")
+        .capitalize()
     )
 
 

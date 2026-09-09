@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
 """
-Usage: bin/plot_map TYPE INPUT SOURCE... OUTPUT
+Usage: bin/plot_map TYPE VAR SEASON START1 END1 [START2 END2] INPUT SOURCE... OUTPUT
 
 Arguments:
 
   TYPE    Plot type. One of: "mean" (period mean), "trend" (period linear trend), or "diff" (period difference).
+  VAR     Variable name.
+  SEASON  Season.
+  START1  Start year (first period).
+  END1    End year (first period).
+  START2  Start year (second period) if the plot type is "diff".
+  END2    End year (second period) if the plot type is "diff".
   INPUT   Input directory with period-season statistics produced by calc_stats (NetCDF).
   SOURCE  Source name.
   OUTPUT  Output directory (PDF).
@@ -15,6 +21,7 @@ import signal
 signal.signal(signal.SIGINT, signal.SIG_DFL)
 
 import os
+import string
 import sys
 import warnings
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -62,36 +69,6 @@ SIG_LEVEL = 0.05  # Statistical significance level
 VLIM_CUTOFF_LAT = 37.4  # Exclude Africa
 
 NCOLS = 4
-
-VARS = [
-    "pr",
-    "psl",
-    "tas",
-    "tasmax",
-    "tasmin",
-]
-
-SEASONS = [
-    "ANN",
-    "MAM",
-    "JJA",
-    "SON",
-    "DJF",
-]
-
-PERIODS = [
-    # [1981, 2020],
-    [1991, 2020],
-    # [1995, 2014],
-    # [2021, 2040],
-    # [2041, 2060],
-    # [2081, 2100],
-]
-
-PERIOD_PAIRS = [
-    [[1991, 2020], [2071, 2100]],
-    # [[1995, 2014], [2081, 2100]],
-]
 
 MARGIN = 0.7  # in
 PANEL_WIDTH = 1.413  # in
@@ -161,10 +138,15 @@ def get_group_bounds_cmap(dd, type_, var, relative):
 
 def get_panel_title(d):
     title = misc.get_source_title(ds.attrs(d))
-    if title == "HC/EC-Earth3-Veg":
-        return title + "/" + ds.attr(d, "driving_variant_label")[:2]
+    if title == "HC(EC-Earth3-Veg)":
+        return (
+            title[:-1]
+            + "-"
+            + ds.attr(d, "driving_variant_label")[:2]
+            + title[-1]
+        )
     elif title == "EC-Earth3-Veg":
-        return title + "/" + ds.attr(d, "variant_label")[:2]
+        return title + "-" + ds.attr(d, "variant_label")[:2]
     else:
         return title
 
@@ -261,15 +243,15 @@ def plot_colorbar(
 
 def plot_legend(type_, pos, offset, layout):
     fw, fh = plt.gcf().get_size_inches()
-    shrink = 0 if pos == 0 else 0.2
-    vert_offset = 0 if pos == 0 else PANEL_HEIGHT + 0.2
+    shrink = 0 if pos == 0 else 0.2  # in
+    vert_offset = 0 if pos == 0 else PANEL_HEIGHT + 0.2  # in
     if pos == 0:
-        bbox_to_anchor = [0.5, (-offset * 0.65 + 0.45) / fh]
+        bbox_to_anchor = [0.5, (-offset * 0.61 + 0.45) / fh]
         loc = "upper center"
     else:
         bbox_to_anchor = [
             MARGIN + PANEL_WIDTH * pos + shrink,
-            0.3 - offset * 0.3 + vert_offset,
+            0.15 - offset * 0.61 + vert_offset,
         ]
         bbox_to_anchor = np.array(bbox_to_anchor) / np.array([fw, fh])
         loc = "upper left"
@@ -352,11 +334,12 @@ def plot_hatching(marker, ind, source_coordinates, lon, lat, x, y, crs):
     )
 
 
-def plot_panel_title(title, in_ensemble=False):
+def plot_panel_title(i, title, in_ensemble=False):
+    letter = string.ascii_lowercase[i]
     plt.text(
-        0.015,
-        0.93,
-        title,
+        0.009,
+        0.992,
+        ("(%s) " % letter) + title,
         transform=plt.gca().transAxes,
         bbox=dict(
             facecolor=(
@@ -366,8 +349,10 @@ def plot_panel_title(title, in_ensemble=False):
             boxstyle="square,pad=0.1",
             alpha=0.9,
         ),
-        fontsize=9,
+        fontsize=8,
         fontweight=("bold" if title == "ENS" else "normal"),
+        ha="left",
+        va="top",
     )
 
 
@@ -385,6 +370,7 @@ def plot_panel_data(z, extent, cmap, bounds, data_crs):
 
 
 def plot_panel(
+    i,
     gs,
     d,
     name,
@@ -463,10 +449,10 @@ def plot_panel(
             y,
             crs,
         )
-    plot_panel_title(title, in_ensemble)
+    plot_panel_title(i, title, in_ensemble)
 
 
-def read(input_, sources, var, name, season, period, index):
+def read(input_, sources, var, name, season, period, index=None):
     dd = []
     vars = [
         name,
@@ -500,7 +486,7 @@ def read(input_, sources, var, name, season, period, index):
             continue
 
         dd1 = io.read_dataset(
-            input_, desc, vars, False, index=index, req_one=True
+            input_, desc, vars, False, req_one=True, index=index
         )
         d = dd1[0]
         dd += [d]
@@ -703,12 +689,12 @@ def source_intersection(dd1, dd2):
     return [dict1[s] for s in sources], [dict2[s] for s in sources]
 
 
-def plot(type_, input_, sources, output, var, name, season, period, index):
+def plot(type_, input_, sources, output, var, name, season, period, index=None):
     has_absolute = False
     has_relative = False
     if type_ == "diff":
-        dd1 = read(input_, sources, var, name, season, period[0], index)
-        dd2 = read(input_, sources, var, name, season, period[1], index)
+        dd1 = read(input_, sources, var, name, season, period[0], index=index)
+        dd2 = read(input_, sources, var, name, season, period[1], index=index)
         dd1, dd2 = source_intersection(dd1, dd2)
         dd1 = [copy(dd1[0])] + dd1
         dd2 = [copy(dd2[0])] + dd2
@@ -716,8 +702,8 @@ def plot(type_, input_, sources, output, var, name, season, period, index):
         d_ref = dd[0]
         d_ens = dd[1]
         for d1, d2 in zip(dd1, dd2):
+            units = ds.attr(d1, "units", var=name)
             if d1 is d_ref:
-                units = ds.attr(d1, "units", var=name)
                 d1["z"], units = misc.convert_pretty_units(d1[name], units)
                 has_absolute = True
                 units_pretty1 = misc.get_pretty_units(units)
@@ -728,7 +714,7 @@ def plot(type_, input_, sources, output, var, name, season, period, index):
                 units_pretty2 = misc.get_pretty_units(units)
             ds.attr(d1, "units", units, var="z")
     else:
-        dd = read(input_, sources, var, name, season, period, index)
+        dd = read(input_, sources, var, name, season, period, index=index)
         d_ref = get_ref(type_, dd, var)
         d_ens = get_ens(dd)
         for d in dd:
@@ -797,6 +783,7 @@ def plot(type_, input_, sources, output, var, name, season, period, index):
         bounds = bounds2 if relative else bounds1
         cmap = cmap2 if relative else cmap1
         plot_panel(
+            i,
             gs[i],
             d,
             name,
@@ -809,6 +796,7 @@ def plot(type_, input_, sources, output, var, name, season, period, index):
         )
 
     label1 = misc.get_pretty_var_label(ds.attr(d_ref, "long_name", var=name))
+    letters1 = "(a)"
     colorbar_offset1 = 0
     if type_ == "trend":
         label2 = label1
@@ -825,9 +813,11 @@ def plot(type_, input_, sources, output, var, name, season, period, index):
             label2 = "Anomaly from %s" % misc.get_source_title(ds.attrs(d_ref))
         colorbar_offset2 = 2
 
+    letters2 = "(b–" + string.ascii_lowercase[len(dd) - 1] + ")"
+
     k = len(dd) % ncols
     colorbar_pos = k if k == 1 else 0
-    legend_pos = k if k == 2 else 0
+    legend_pos = k if k == 2 or k == 1 and type_ != "diff" else 0
     legend_layout = "vertical" if k == 2 else "horizontal"
     ncolorbars = has_absolute + has_relative
     legend_offset = ncolorbars if legend_pos == colorbar_pos else 0
@@ -837,7 +827,7 @@ def plot(type_, input_, sources, output, var, name, season, period, index):
             var,
             bounds1,
             cmap1,
-            label1,
+            letters1 + " " + label1,
             units_pretty1,
             False,
             colorbar_pos,
@@ -848,7 +838,7 @@ def plot(type_, input_, sources, output, var, name, season, period, index):
             var,
             bounds2,
             cmap2,
-            label2,
+            (letters2 + " " if has_absolute else "") + label2,
             units_pretty2,
             True,
             colorbar_pos,
@@ -861,53 +851,61 @@ def plot(type_, input_, sources, output, var, name, season, period, index):
         type_, label1, season, period, get_scenario(ds.attrs(d_ref))
     )
     file = get_file_name(type_, var, season, period)
-    plt.suptitle(title, y=(1 - 0.7 * MARGIN / figsize[1]), fontsize=10)
+    plt.suptitle(title, y=(1 - 0.7 * MARGIN / figsize[1]), fontsize=9)
     filename = os.path.join(output, file)
     plt.savefig(filename, bbox_inches="tight")
     print("-> %s" % filename)
 
 
-def main(type_, input_, sources, output):
-    with ProcessPoolExecutor() as ex:
-        index = io.list_dataset(input_, ex=ex)
-        futures = []
-        for var in VARS:
-            if type_ == "trend":
-                name = f"{var}_trend"
-            else:
-                name = f"{var}_mean"
-            for season in SEASONS:
-                periods = PERIOD_PAIRS if type_ == "diff" else PERIODS
-                for period in periods:
-                    futures += [
-                        ex.submit(
-                            plot,
-                            type_,
-                            input_,
-                            sources,
-                            output,
-                            var,
-                            name,
-                            season,
-                            period,
-                            index,
-                        )
-                    ]
-        for future in as_completed(futures):
-            future.result()
+def main(type_, var, season, period1, period2, input_, sources, output):
+    period = period1 if period2 is None else [period1, period2]
+    if type_ == "trend":
+        name = f"{var}_trend"
+    else:
+        name = f"{var}_mean"
+    index = io.list_dataset(input_)
+    plot(
+        type_,
+        input_,
+        sources,
+        output,
+        var,
+        name,
+        season,
+        period,
+        index=index,
+    )
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 5:
+    if len(sys.argv) < 9:
         sys.stderr.write(sys.modules[__name__].__doc__)
         sys.exit(1)
 
     type_ = sys.argv[1]
-    input_ = sys.argv[2]
-    sources = sys.argv[3:-1]
+
+    if type_ == "diff" and len(sys.argv) < 11:
+        sys.stderr.write(sys.modules[__name__].__doc__)
+        sys.exit(1)
+
+    var = sys.argv[2]
+    season = sys.argv[3]
+    start1 = int(sys.argv[4])
+    end1 = int(sys.argv[5])
+    period1 = [start1, end1]
+    i = 6
+    if type_ == "diff":
+        start2 = int(sys.argv[6])
+        end2 = int(sys.argv[7])
+        period2 = [start2, end2]
+        i += 2
+    else:
+        period2 = None
+    input_ = sys.argv[i]
+    sources = sys.argv[(i + 1) : -1]
     output = sys.argv[-1]
 
     if type_ not in ["mean", "trend", "diff"]:
         raise ValueError(f"invalid type {type_!r}")
 
-    main(type_, input_, sources, output)
+    main(type_, var, season, period1, period2, input_, sources, output)

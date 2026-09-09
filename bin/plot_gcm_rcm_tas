@@ -154,14 +154,14 @@ def plot_panel(type_, gcm_ecs_tcr, dd_gcm1, dd_gcm2, dd_rcm1, dd_rcm2, color):
         xx = normalize(xx)
         yy = normalize(yy)
         label1 = "Normalised"
-        label2 = type_
+        label2 = type_ + " (°C)"
         lim = [-2, 2]
     elif type_ == "delta_T":
         xx1 = get_tas(dd_gcm1)
         xx2 = get_tas(dd_gcm2)
         xx = xx2 - xx1
         label1 = ""
-        label2 = "$\\Delta$T (°C)"
+        label2 = "near-surf. temp. change (°C)"
         lim = [1, 5]
     else:
         raise ValueError(f"invalid type {type_!r}")
@@ -181,7 +181,7 @@ def plot_panel(type_, gcm_ecs_tcr, dd_gcm1, dd_gcm2, dd_rcm1, dd_rcm2, color):
     plt.xlim(lim)
     plt.ylim(lim)
     plt.xlabel(label1 + " GCM " + label2)
-    plt.ylabel(label1 + " RCM " + label2)
+    plt.ylabel(label1 + " RCM near-surf. temp. change (°C)")
 
 
 def get_gcm_sources(sources_rcm, dd_rcm):

@@ -69,6 +69,7 @@ plot_gcm_rcm_tas      Plot GCM. vs RCM. temperature change.
 download_topo         Download topography.
 remap_topo            Remap topography (dep: download_topo).
 plot_domain_map       Plot domain map (dep: remap_topo).
+archive               Prepare an archive of input data.
 ```
 
 The individual processing and plotting commands are under `bin`. To see help

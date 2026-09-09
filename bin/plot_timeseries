@@ -16,6 +16,7 @@ Arguments:
   OUTPUT        Output plot.
 """
 
+import string
 import sys
 import warnings
 
@@ -104,10 +105,10 @@ MARKERS = [
 ]
 
 VAR_LABEL = {
-    "tas": "T",
-    "tasmin": "$\\mathrm{T_{min}}$",
-    "tasmax": "$\\mathrm{T_{max}}$",
-    "pr": "R",
+    "tas": "Near-surf. temp.",
+    "tasmin": "Daily min. near-surf. temp.",
+    "tasmax": "Daily max. near-surf. temp.",
+    "pr": "Precip.",
 }
 
 SIGMA = 10  # Gaussian smoothing kernel sigma for all but precipitation.
@@ -173,6 +174,7 @@ def init_figure(nrows, ncols):
 
 
 def plot_panel(
+    i,
     dd_ref,
     dd,
     dd_future,
@@ -276,6 +278,18 @@ def plot_panel(
             plt.title("%s (%s)" % (VAR_LABEL[var], units_label), fontsize=10)
         plt.xlim(dd[0]["year"][0], dd[0]["year"][-1])
 
+        letter = string.ascii_lowercase[i]
+        plt.text(
+            0.015,
+            0.985,
+            "%s" % letter,
+            ha="left",
+            va="top",
+            fontsize=9,
+            fontweight="bold",
+            transform=plt.gca().transAxes,
+        )
+
     return line
 
 
@@ -289,6 +303,7 @@ def plot_legend(lines, labels):
         handletextpad=0.5,
         labelspacing=0.2,
         borderpad=0.2,
+        bbox_to_anchor=(0, 0.96),
     )
 
 
@@ -305,6 +320,7 @@ def main(
     nrows = len(SEASONS)
     ncols = len(VARS)
     gs = init_figure(nrows, ncols)
+    n = 0
     for i, season in enumerate(SEASONS):
         for j, var in enumerate(VARS):
             lines = []
@@ -339,6 +355,7 @@ def main(
                 )
                 lines += [
                     plot_panel(
+                        n,
                         dd_ref,
                         dd,
                         dd_future,
@@ -359,6 +376,7 @@ def main(
                         offset=k,
                     )
                 ]
+            n += 1
             # if i == 0 and j == len(VARS) - 1:
             if i == 0 and j == 0:
                 plot_legend(lines, REGIONS)
