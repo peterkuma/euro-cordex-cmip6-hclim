@@ -60,10 +60,19 @@ the analysis are: `pr`, `psl`, `tas`, `tasmax`, and `tasmin`. The data for the
 path of every line should point to the historical experiment files, and the
 second path points to the SSP1-2.6 projection files.
 
-There are four types of input data: global model data, HCLIM regional model
-data, observations, and reanalyses. The global model data should be on a 1°×1°
-longitude−latitude grid, and the rest on a European 12.5-km Lambert conformal
-conic (LCC) projection grid.
+There are four types of input data: the global CMIP6 model data (CNRM-ESM2-1,
+EC-Earth3-Veg, IPSL-CM6A-LR, MIROC6, MPI-ESM1-2-HR, and NorESM2-MM); the HCLIM
+regional model data; the E-OBS observations; and the CERRA, CERRA-Land, and ERA5
+reanalyses. The global model data should be on a 1°×1° longitude−latitude grid
+(GLB-1deg), and the rest on a European 12.5-km Lambert conformal conic
+projection grid (EUR-12lcc). The CDO grid definitions of GLB-1deg and EUR-12lcc
+are in `input/grid/GLB-1deg.txt` and `input/grid/EUR-12lcc.txt`, respectively.
+The input files can be remapped to these grids using `cdo
+remapbil,input/grid/`*grid*`.txt` *input* *output*, where *grid* is `GLB-1deg`
+or `EUR-12lcc`, *input* is the input NetCDF file and *output* is the output
+NetCDF file. This step has to be done manually before filling the paths in
+`sources/paths` (these should point to the re-gridded data). For the historical
+evaluation manuscript, only monthly data are required.
 
 ## Usage
 
