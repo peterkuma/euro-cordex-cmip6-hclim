@@ -37,12 +37,33 @@ You can leave the `venv` with `deactivate` and use it again with
 
 ## Input data
 
-Input data are required to be able to meaningfully use the supplied code. These
-include the global and regional model output. The paths to the source data are
-specified in `sources/paths`. These should be changed to the actual paths on
-your system. The model output is currently not yet publicly available and will
-be provided once the manuscript is submitted. It can also be provided on request
-by the authors.
+Input data are required to be able to meaningfully use the code. These include
+the global (CMIP6) and regional model (HCLIM) output, observations (E-OBS), and
+reanalyses (CERRA and CERRA-Land). The paths to the source data are specified in
+`sources/paths`. These should be changed to the actual paths on your system. The
+HCLIM data are soon to be avaiable on the [Earth System Grid
+Federation](https://esgf.github.io). The observations are reanalyes are publicly
+available from the Copernicus Climate Change Service:
+[E-OBS](https://surfobs.climate.copernicus.eu/dataaccess/access_eobs.php),
+[CERRA](https://doi.org/10.24381/cds.622a565a),
+[CERRA-Land](https://doi.org/10.24381/cds.a7f3cd0b), and
+[ERA5](https://doi.org/10.24381/cds.143582cf).
+
+The format of `sources/paths` is dataset name followed by input paths, separated
+by space. `$freq`, `$var`, and `$stage` in the input paths are replaced with the
+frequency (`day`, `mon`, or `yr`), variable name (such as `tas`), and stage name
+(`core` or `tier1`), respectively. The paths should contain NetCDF files, one or
+more files per variable, optionally split by time. The variables required for
+the analysis are: `pr`, `psl`, `tas`, `tasmax`, and `tasmin`. The data for the
+1991−2020 time period are patched together from the historical experiment
+(1991−2014) and the SSP1-2.6 future projection (2015−2020). Therefore, the first
+path of every line should point to the historical experiment files, and the
+second path points to the SSP1-2.6 projection files.
+
+There are four types of input data: global model data, HCLIM regional model
+data, observations, and reanalyses. The global model data should be on a 1°×1°
+longitude−latitude grid, and the rest on a European 12.5-km Lambert conformal
+conic (LCC) projection grid.
 
 ## Usage
 
