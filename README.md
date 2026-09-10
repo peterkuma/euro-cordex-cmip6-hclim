@@ -67,8 +67,8 @@ reanalyses. The global model data should be on a 1°×1° longitude−latitude g
 (GLB-1deg), and the rest on a European 12.5-km Lambert conformal conic
 projection grid (EUR-12lcc). The CDO grid definitions of GLB-1deg and EUR-12lcc
 are in `input/grid/GLB-1deg.txt` and `input/grid/EUR-12lcc.txt`, respectively.
-The input files can be remapped to these grids using `cdo
-remapbil,input/grid/`*grid*`.txt` *input* *output*, where *grid* is `GLB-1deg`
+The input files can be remapped to these grids using "`cdo
+remapbil,input/grid/`*grid*`.txt` *input* *output*", where *grid* is `GLB-1deg`
 or `EUR-12lcc`, *input* is the input NetCDF file and *output* is the output
 NetCDF file. This step has to be done manually before filling the paths in
 `sources/paths` (these should point to the re-gridded data). For the historical
