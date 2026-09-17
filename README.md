@@ -3,8 +3,8 @@
 This repository contains processing and plotting code for the manuscript
 [Evaluation of historical simulations in the HCLIM43-ALADIN regional climate
 downscaling ensemble over Europe in the EURO-CORDEX-CMIP6
-framework](10.5281/zenodo.22813644). The results are presented in the
-presentation [New ensemble of regional climate projections for
+framework](https://doi.org/10.5281/zenodo.22813644). The results are presented
+in the presentation [New ensemble of regional climate projections for
 Europe](https://doi.org/10.5281/zenodo.20340840).
 
 This code processes data from HCLIM43-ALADIN (a regional climate model, RCM)
