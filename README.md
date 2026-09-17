@@ -111,6 +111,12 @@ for a command, run it without any arguments, e.g., `bin/calc_stats`.
 The `run` script and the command should always be run from the main directory of
 this repository.
 
+## Releases
+
+### 1.0.0 (2026-09-17)
+
+- Initial release for the submitted manuscript.
+
 ## License
 
 The code has been developed by Peter Kuma and is available under the terms of
