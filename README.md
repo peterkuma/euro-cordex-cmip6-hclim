@@ -14,10 +14,13 @@ reanalyses.
 
 ## Requirements
 
+It is recommended to run the code on GNU/Linux. It has been tested on AlmaLinux
+9.8.
+
+- Python >= 3.14 (tested with 3.14.2)
+- Bash >= 5.1 (tested with 5.1.8)
 - GNU Parallel >= 20220722 (tested with 20220722)
-- CDO >= 2.3.0 (tested with 2.3.0)
-- wget (tested with 1.21.1)
-- Python >= 3.14.2 (tested with 3.14.2)
+- CDO >= 2.3 (tested with 2.3.0)
 - Python packages specified in `requirements.txt`
 
 To install the Python packages, it is recommended to use a Python virtual
